@@ -19,24 +19,53 @@ Docs and code comments are in German.*
 
 - **Kinematik:** Inverse Kinematik pro Bein und für die Körperpose
   (Translation/Rotation bei stehenden Füßen)
-- **Gangarten:** Tripod-Gait, kontinuierlicher kommandierbarer Gait
-  (Joystick), sanftes Aufstehen/Hinlegen, Kletter-Sequenz für Stufen
-- **Gesten:** Winken, Mantis-Pose, Bein heben u. a.
+- **Vier Gangarten:** Tripod (3+3, schnell), Tetrapod (2+2+2),
+  Ripple (kontralateral) und Wave (metachronal, maximal stabil) —
+  über eine gemeinsame Phasen-Mechanik definiert und zur Laufzeit umschaltbar
+- **Bewegungen:** kontinuierlicher, kommandierbarer Gait (Joystick), sanftes
+  Aufstehen/Hinlegen, Kletter-Sequenz für Stufen, Gesten (Winken, Mantis-Pose,
+  Bein heben u. a.)
 - **Sensorik:** MPU6050 (Selbstnivellierung im Stand), HC-SR04-Sonar
   (Hindernis-Stopp + Sweep-Scan), Akkuüberwachung, Kamera
 - **Web-UI:** Dashboard mit Joystick, Pose-Slidern, Kamerabild und
   Netzwerk-Verwaltung (WLAN/Hotspot); zusätzlich Gamepad-Seite
-- **Extras:** Android-App (`hexapod_android/`), CV-Follow-Client mit
-  YOLO11 (`hexapod_vision/`), ESP32-CRSF-Funkbrücke (`tools/`)
+- **CLI:** `uv run hexapod ...` mit u. a. `calibrate`, `walk`, `move`, `pose`,
+  `trim`, `status`
+
+## Fernsteuerung mit RC-Sender (ESP32-Modul)
+
+`tools/esp32_crsf_wifi/` enthält die Firmware für ein **CRSF→WiFi-Modul** auf
+Basis des Seeed XIAO ESP32-C6: Es steckt im externen Modulschacht einer
+RC-Fernsteuerung (z. B. RadioMaster TX16S mit EdgeTX), liest die CRSF-Kanäle
+direkt aus dem Schacht und sendet `walk`/`halt`/`pose`/`set_gait` per WLAN an
+den Hexapod-Webserver — inklusive Failsafe. Nur drei Drähte, Versorgung aus
+dem Modulschacht. Details, Verkabelung und Pin-Warnungen im dortigen README.
+
+Alternativ liegen in `tools/` Python-Referenzimplementierungen
+(`hexapod_crsf.py`, `hexapod_controller.py`) für den PC.
+
+## Computer Vision & Follow-Modus
+
+`hexapod_vision/` ist ein GPU-Client, der auf einem separaten Rechner läuft
+(der Pi streamt nur sein Kamerabild): **YOLO11** für Objekt-/Personenerkennung,
+**ByteTrack/BoT-SORT** fürs Tracking und **Depth Anything V2** für monokulare
+Tiefenschätzung. Der `follow_client.py` schließt den Regelkreis: Person im Bild
+verfolgen und dem Roboter Bewegungskommandos schicken. Setup-Anleitung
+(PyTorch/CUDA via uv) im dortigen README.
+
+## Android-App
+
+`hexapod_android/` enthält eine native Android-App (Kotlin) als Alternative
+zur Web-UI.
 
 ## Architektur
 
 ```
-Server/Web-UI / Android / CLI / Vision   <- was der Roboter "tut"
-Gait Engine (tripod, gestures, climb, ...) <- Beine koordinieren
-Trajectory + Executor                     <- Bahnen erzeugen, zeitgesteuert senden
-Kinematik (leg_ik, body_ik)               <- Fusspunkt/Pose -> Gelenkwinkel
-Driver (maestro | simulator)              <- Hardware austauschbar
+Server/Web-UI / Android / CLI / Vision / RC  <- was der Roboter "tut"
+Gait Engine (gaits, gestures, climb, ...)    <- Beine koordinieren
+Trajectory + Executor                        <- Bahnen erzeugen, zeitgesteuert senden
+Kinematik (leg_ik, body_ik)                  <- Fusspunkt/Pose -> Gelenkwinkel
+Driver (maestro | simulator)                 <- Hardware austauschbar
 ```
 
 Alle Bewegungslogik spricht nur das abstrakte Treiber-Interface; Positionen
@@ -86,9 +115,11 @@ Commit-Konvention: deutsche Conventional Commits (`feat(gait): ...`).
 
 ## Status & Roadmap
 
-- [x] Maestro-Treiber, IK, Tripod-Gait, Web-UI, Gesten, Klettern
+- [x] Maestro-Treiber, IK, vier Gangarten (Tripod/Tetrapod/Ripple/Wave)
+- [x] Web-UI, Gesten, Klettern, Selbstnivellierung, Sonar
+- [x] RC-Fernsteuerung via ESP32-CRSF-Modul, Android-App
+- [x] Vision-Pipeline (YOLO11 + Tracking + Tiefe) mit Follow-Modus
 - [ ] PCA9685-Treiber fuer das originale Freenove-Board
-- [ ] Weitere Gangarten (Wave, Ripple)
 
 ## Lizenz & Hinweis
 
