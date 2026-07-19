@@ -1,11 +1,12 @@
-# Hexapod Vision — Setup auf CachyOS (RTX 4070 Super)
+# Hexapod Vision — GPU-Client (YOLO11, Tracking, Tiefe)
 
 Computer-Vision-Umgebung für den Hexapod: **Objekterkennung (YOLO11)**,
 **Tracking** (ByteTrack/BoT-SORT) und **monokulare Tiefe/Hindernisse**
-(Depth Anything V2). Läuft auf dem Hauptrechner unter CachyOS, GPU-beschleunigt
-über die RTX 4070 Super (12 GB).
+(Depth Anything V2). Läuft auf einem separaten Linux-Rechner mit NVIDIA-GPU
+(entwickelt und getestet unter CachyOS/Arch mit einer RTX 4070 Super, 12 GB —
+zu anderen Distributionen siehe unten).
 
-Die Schwerlast-Modelle laufen bewusst auf dem 4070-Rechner, nicht auf dem Pi —
+Die Schwerlast-Modelle laufen bewusst auf dem GPU-Rechner, nicht auf dem Pi —
 der Roboter streamt sein Kamerabild her und bekommt Erkennungen/Tiefe zurück.
 
 ## Was installiert wird
@@ -21,7 +22,9 @@ der Roboter streamt sein Kamerabild her und bekommt Erkennungen/Tiefe zurück.
 
 ## Voraussetzung: NVIDIA-Treiber
 
-CachyOS ist Arch-basiert. Für die RTX 4070 Super (Ada) ist der **nvidia-open**-Treiber empfohlen:
+Einzige distro-spezifische Voraussetzung ist ein funktionierender
+NVIDIA-Treiber. Unter Arch/CachyOS (für Ada-Karten wie die 4070 Super ist
+**nvidia-open** empfohlen):
 
 ```bash
 sudo pacman -S --needed nvidia-open-dkms nvidia-utils
@@ -38,7 +41,10 @@ nvidia-smi   # muss Karte + Treiberversion zeigen
 > Falls du einen Custom-Kernel von CachyOS nutzt: `nvidia-open-dkms` baut das Modul
 > passend zum Kernel. Bei reinem Stock-Kernel geht alternativ `nvidia-open`.
 
-## Installation
+## Installation (CachyOS/Arch)
+
+Das Setup-Skript heißt bewusst `setup_vision_cachyos.sh`, weil es nur auf
+CachyOS/Arch läuft (es installiert Systempakete per `pacman`):
 
 ```bash
 cd hexapod_vision
@@ -49,12 +55,33 @@ chmod +x setup_vision_cachyos.sh
 Das Skript ist **idempotent** — mehrfaches Ausführen ist unschädlich. Es legt eine
 lokale `.venv/` an, installiert alles hinein und lädt die YOLO11-Gewichte vor.
 
+## Andere Distributionen
+
+Nur die Systempakete und der Treiber unterscheiden sich — alles Weitere
+(uv, venv, PyTorch mit mitgelieferter CUDA-Runtime) ist distro-unabhängig.
+Manuell statt Skript:
+
+```bash
+# 1. Systempakete (Beispiele)
+sudo apt install git build-essential ffmpeg      # Ubuntu/Debian
+sudo dnf install git gcc gcc-c++ make ffmpeg     # Fedora (Treiber: RPM Fusion, akmod-nvidia)
+
+# 2. uv installieren: https://docs.astral.sh/uv/
+# 3. venv + Pakete (identisch zu den Schritten im Skript):
+uv venv --python 3.13 .venv
+uv pip install --index-url https://download.pytorch.org/whl/cu124 torch torchvision
+uv pip install "ultralytics>=8.3.0" "lap>=0.5.12" "transformers>=4.44.0" \\
+    "opencv-python>=4.10.0" "pillow>=10.0.0" "numpy<2.2"
+```
+
+Hinweise: AMD-GPUs bräuchten die ROCm-Wheels von PyTorch (nicht getestet);
+ohne GPU läuft alles auf CPU, Depth Anything wird dann allerdings langsam.
+
 ## Funktionstest
 
-CachyOS nutzt standardmäßig **fish**:
-
-```fish
-source .venv/bin/activate.fish
+```bash
+source .venv/bin/activate          # bash/zsh
+source .venv/bin/activate.fish     # fish (CachyOS-Standard)
 python vision_smoketest.py
 ```
 
