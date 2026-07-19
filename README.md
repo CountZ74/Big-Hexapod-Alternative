@@ -25,8 +25,9 @@ Docs and code comments are in German.*
 - **Bewegungen:** kontinuierlicher, kommandierbarer Gait (Joystick), sanftes
   Aufstehen/Hinlegen, Kletter-Sequenz für Stufen, Gesten (Winken, Mantis-Pose,
   Bein heben u. a.)
-- **Sensorik:** MPU6050 (Selbstnivellierung im Stand), HC-SR04-Sonar
-  (Hindernis-Stopp + Sweep-Scan), Akkuüberwachung, Kamera
+- **Sensorik:** MPU6050 (Selbstnivellierung im Stand), Akkuüberwachung,
+  Kamera; HC-SR04-Sonar für Hindernis-Stopp und Sweep-Scan ist integriert,
+  aber noch in Erprobung
 - **Web-UI:** Dashboard mit Joystick, Pose-Slidern, Kamerabild und
   Netzwerk-Verwaltung (WLAN/Hotspot); zusätzlich Gamepad-Seite
 - **CLI:** `uv run hexapod ...` mit u. a. `calibrate`, `walk`, `move`, `pose`,
@@ -98,6 +99,22 @@ Als Dauerbetrieb empfiehlt sich ein systemd-Dienst, der
 Server-Neustarts hinweg in `/tmp/hexapod_robot_state` gehalten; nach einem
 Reboot startet er sauber in `off`.
 
+## Kalibrierung & Startposition
+
+Die **initiale Kalibrierung** erfolgt in einer definierten mechanischen
+Referenzlage: Der Roboter liegt auf der Chassis-Unterseite, alle sechs Beine
+**flach radial nach außen gestreckt**. In dieser Position wird jedem
+Maestro-Kanal per `uv run hexapod calibrate` der zugehörige Pulsweiten-Wert
+zugeordnet (Zuordnung Kanal ↔ Gelenk siehe `servo_mapper/`).
+
+Aus dieser Lage heraus ist auch der **Kaltstart** definiert: Femur hoch,
+Tibia runter, Füße über die Standpunkte, dann langsames Heben des Körpers
+(`power_up`) — alles mit begrenzter Servo-Geschwindigkeit.
+
+Die **Feineinstellung** einzelner Gelenke erfolgt später im Betrieb über
+`uv run hexapod trim` bzw. `stance-trim`. Ein 3D-druckbares **Kalibrierungsrig**
+(STL) für reproduzierbare Referenzwinkel folgt in Kürze im Repo.
+
 **Sicherheitshinweis:** Nach dem Einschalten kennt der Controller die
 mechanische Lage der Beine nicht. Die Software fährt deshalb beim Aufstehen
 erst mit begrenzter Servo-Geschwindigkeit an (`prime()` -> `power_up`).
@@ -116,9 +133,12 @@ Commit-Konvention: deutsche Conventional Commits (`feat(gait): ...`).
 ## Status & Roadmap
 
 - [x] Maestro-Treiber, IK, vier Gangarten (Tripod/Tetrapod/Ripple/Wave)
-- [x] Web-UI, Gesten, Klettern, Selbstnivellierung, Sonar
+- [x] Web-UI, Gesten, Klettern, Selbstnivellierung
 - [x] RC-Fernsteuerung via ESP32-CRSF-Modul, Android-App
 - [x] Vision-Pipeline (YOLO11 + Tracking + Tiefe) mit Follow-Modus
+- [ ] Sonar-Hindernisvermeidung fertigstellen (Hardware-Verifikation)
+- [ ] Fußsensoren (Bodenkontakt-Erkennung)
+- [ ] Kalibrierungsrig-STL veröffentlichen
 - [ ] PCA9685-Treiber fuer das originale Freenove-Board
 
 ## Lizenz & Hinweis
