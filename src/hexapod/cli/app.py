@@ -1,0 +1,162 @@
+"""Typer-App — Entry-Point für alle CLI-Befehle."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import typer
+
+app = typer.Typer(
+    name="hexapod",
+    help="Hexapod-Steuerung und Kalibrierung.",
+    add_completion=False,
+    no_args_is_help=True,
+)
+
+
+@app.command("calibrate")
+def calibrate(
+    config: Path = typer.Option(
+        Path("config/robot.yaml"),
+        "--config", "-c",
+        help="Pfad zur robot.yaml",
+    ),
+    simulator: bool = typer.Option(
+        False,
+        "--simulator", "-s",
+        help="Simulator statt echtem Maestro nutzen",
+    ),
+    start_channel: int = typer.Option(
+        0,
+        "--start", "-n",
+        help="Mit diesem Kanal beginnen (0-basiert)",
+    ),
+) -> None:
+    """Interaktive Servo-Kalibrierung."""
+    from .calibrate import run_calibration
+    run_calibration(config=config, simulator=simulator, start_channel=start_channel)
+
+
+_CONFIG_OPT = typer.Option(
+    Path("config/robot.yaml"), "--config", "-c", help="Pfad zur robot.yaml"
+)
+
+
+@app.command("power-up")
+def power_up_cmd(
+    config: Path = _CONFIG_OPT,
+    yes: bool = typer.Option(
+        False, "--yes", "-y", help="Ohne Rückfrage starten"
+    ),
+) -> None:
+    """Kaltstart: aus der Kalibrierposition aufstehen (mit P1-Schutz)."""
+    from .motion import cmd_power_up
+    cmd_power_up(config, confirm=not yes)
+
+
+@app.command("stand-up")
+def stand_up_cmd(config: Path = _CONFIG_OPT) -> None:
+    """Körper aus abgesetzter Lage in die Standpose heben."""
+    from .motion import cmd_stand_up
+    cmd_stand_up(config)
+
+
+@app.command("lie-down")
+def lie_down_cmd(config: Path = _CONFIG_OPT) -> None:
+    """Körper in die abgesetzte Lage senken."""
+    from .motion import cmd_lie_down
+    cmd_lie_down(config)
+
+
+@app.command("stance")
+def stance_cmd(config: Path = _CONFIG_OPT) -> None:
+    """Alle Beine in die Standpose fahren."""
+    from .motion import cmd_stance
+    cmd_stance(config)
+
+
+@app.command("walk")
+def walk_cmd(
+    config: Path = _CONFIG_OPT,
+    cycles: int = typer.Option(3, "--cycles", "-n", help="Anzahl Zyklen"),
+    stride: float = typer.Option(40.0, "--stride", help="Schrittlänge mm"),
+    height: float = typer.Option(30.0, "--height", help="Hubhöhe mm"),
+    rate_hz: float = typer.Option(40.0, "--rate", help="Sende-Frequenz Hz"),
+    direction: float = typer.Option(
+        1.0, "--direction", "-d", help="+1 vorwärts, -1 rückwärts"
+    ),
+) -> None:
+    """Tripod-Gait laufen."""
+    from .motion import cmd_walk
+    cmd_walk(config, cycles, stride, height, rate_hz, direction)
+
+
+@app.command("move")
+def move_cmd(
+    config: Path = _CONFIG_OPT,
+    vx: float = typer.Option(0.0, "--vx", help="Translation vorwärts(+)/rückwärts(-) mm/Schritt"),
+    vy: float = typer.Option(0.0, "--vy", help="Translation links(+)/rechts(-) mm/Schritt"),
+    omega: float = typer.Option(0.0, "--omega", "-w", help="Drehung CCW(+) rad/Schritt"),
+    cycles: int = typer.Option(3, "--cycles", "-n", help="Anzahl Zyklen"),
+    height: float = typer.Option(30.0, "--height", help="Hubhöhe mm"),
+    rate_hz: float = typer.Option(40.0, "--rate", help="Sende-Frequenz Hz"),
+) -> None:
+    """Verallgemeinerter Gait: vorwärts, seitwärts, drehen und Mischungen."""
+    from .motion import cmd_move
+    cmd_move(config, vx, vy, omega, cycles, height, rate_hz)
+
+
+@app.command("pose")
+def pose_cmd(
+    config: Path = _CONFIG_OPT,
+    tx: float = typer.Option(0.0, "--tx", help="K\u00f6rper vor(+)/zur\u00fcck(-) mm"),
+    ty: float = typer.Option(0.0, "--ty", help="K\u00f6rper links(+)/rechts(-) mm"),
+    tz: float = typer.Option(0.0, "--tz", help="K\u00f6rper hoch(+)/runter(-) mm"),
+    roll: float = typer.Option(0.0, "--roll", "-r", help="Rollen um X-Achse, Grad"),
+    pitch: float = typer.Option(0.0, "--pitch", "-p", help="Nicken um Y-Achse, Grad"),
+    yaw: float = typer.Option(0.0, "--yaw", help="Gieren um Z-Achse, Grad"),
+    steps: int = typer.Option(30, "--steps", help="Interpolationsschritte"),
+    rate_hz: float = typer.Option(50.0, "--rate", help="Sende-Frequenz Hz"),
+) -> None:
+    """K\u00f6rperpose \u00fcber stehenden F\u00fc\u00dfen einnehmen (Translation + Rotation)."""
+    from .motion import cmd_pose
+    cmd_pose(config, tx, ty, tz, roll, pitch, yaw, steps, rate_hz)
+
+
+@app.command("trim")
+def trim_cmd(
+    config: Path = _CONFIG_OPT,
+    power_up: bool = typer.Option(
+        False, "--power-up", "-p",
+        help="Vorher aus Kalibrierposition aufstehen (alles in einer Sitzung)",
+    ),
+) -> None:
+    """Interaktiv den Z-Trim pro Bein einstellen (Bodenkontakt angleichen)."""
+    from .trim import run_trim
+    run_trim(config, do_power_up=power_up)
+
+
+@app.command("stance-trim")
+def stance_trim_cmd(
+    config: Path = _CONFIG_OPT,
+    simulator: bool = typer.Option(
+        False, "--simulator", "-s", help="Simulator statt echtem Maestro nutzen"
+    ),
+    power_up: bool = typer.Option(
+        False, "--power-up", "-p",
+        help="Vorher aus Kalibrierposition aufstehen (alles in einer Sitzung)",
+    ),
+) -> None:
+    """Servo-Nulllagen in der Stance fein justieren (Footprint-Methode)."""
+    from .stance_trim import run_stance_trim
+    run_stance_trim(config, simulator=simulator, do_power_up=power_up)
+
+
+@app.command("status")
+def status() -> None:
+    """Zeigt den aktuellen Roboter-Status."""
+    typer.echo("Status: noch nicht implementiert.")
+
+
+if __name__ == "__main__":
+    app()

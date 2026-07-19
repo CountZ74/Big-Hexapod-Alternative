@@ -1,0 +1,10 @@
+// Hexapod: erlaubt dem Dienst-User 'sebi' die Steuerung von NetworkManager
+// (WLAN verbinden / Hotspot) ohne interaktive Authentifizierung.
+// Installation:  sudo cp deploy/50-hexapod-network.rules /etc/polkit-1/rules.d/
+//                sudo systemctl restart polkit
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
+        subject.user === "sebi") {
+        return polkit.Result.YES;
+    }
+});

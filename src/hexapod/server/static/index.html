@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hexapod · Telemetrie</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0b0e11;--surface:#14191f;--surface2:#1b2128;--border:#252e37;
+  --text:#e7edf3;--muted:#7c8794;--dim:#46505b;
+  --teal:#2dd4bf;--amber:#f0a830;--red:#ef5350;--green:#34d399;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+  --disp:'Chakra Petch',system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bg);color:var(--text);font-family:var(--disp);min-height:100vh;
+  background-image:linear-gradient(rgba(45,212,191,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(45,212,191,.025) 1px,transparent 1px);
+  background-size:34px 34px;
+}
+header{
+  display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;
+  padding:18px 24px;border-bottom:1px solid var(--border);background:rgba(11,14,17,.85);
+  position:sticky;top:0;backdrop-filter:blur(6px);z-index:5;
+}
+.brand{display:flex;align-items:baseline;gap:14px}
+.brand h1{margin:0;font-weight:700;font-size:24px;letter-spacing:3px}
+.brand .sub{font-family:var(--mono);font-size:13px;color:var(--muted)}
+.chips{display:flex;gap:10px;flex-wrap:wrap}
+.chip{
+  font-family:var(--mono);font-size:12px;padding:6px 12px;border:1px solid var(--border);
+  border-radius:6px;background:var(--surface);color:var(--muted);display:flex;align-items:center;gap:8px;
+}
+.chip b{color:var(--text);font-weight:500}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--dim);flex:none}
+.dot.live{background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 1.6s ease-in-out infinite}
+.dot.stale{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+.dot.off{background:var(--red);box-shadow:0 0 8px var(--red)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.pfd{padding:16px 18px;display:grid;grid-template-columns:minmax(150px,200px) minmax(0,1fr) minmax(150px,200px);grid-template-areas:"bl cam br" "ctl ctl ctl" "tel tel tel";gap:14px;align-items:start}
+#bezel-l{grid-area:bl}#cam-area{grid-area:cam}#bezel-r{grid-area:br}#ctl-area{grid-area:ctl}.telem{grid-area:tel}
+.bezel{display:flex;flex-direction:column;gap:8px}
+.bezel .section-label{margin:0 0 2px 2px}
+.bezel button.chip{width:100%;justify-content:center;text-align:center}
+.bezel input[type=color]{height:30px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);width:42px;flex:none}
+#ctl-area{display:grid;grid-template-columns:minmax(220px,300px) minmax(0,1fr);gap:14px;align-items:start}
+#ctl-left{display:flex;flex-direction:column;gap:14px}
+.telem{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:9px 13px}
+.telem>summary{cursor:pointer;font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--muted);text-transform:uppercase}
+.telem[open]>summary{color:var(--teal)}
+.telem .legs{margin-top:12px}
+@media(max-width:880px){.pfd{grid-template-columns:1fr;grid-template-areas:"cam" "ctl" "bl" "br" "tel"}#ctl-area{grid-template-columns:1fr}}
+.section-label{font-family:var(--mono);font-size:11px;letter-spacing:2px;color:var(--dim);
+  text-transform:uppercase;margin:0 0 12px 2px}
+.legs{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+@media(max-width:1320px){.legs{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.legs{grid-template-columns:1fr}}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px 15px}
+.card.degraded{border-color:#5a4420}
+.card .ch{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.card .name{font-weight:500;letter-spacing:1.5px;font-size:14px}
+.joint{margin:9px 0}
+.joint .row{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12px;margin-bottom:4px}
+.joint .row .lbl{color:var(--muted);letter-spacing:1px}
+.joint .row .val{color:var(--text);font-weight:500}
+.bar{height:4px;background:var(--surface2);border-radius:2px;overflow:hidden}
+.bar>span{display:block;height:100%;background:var(--teal);width:0;transition:width .25s ease}
+.foot{margin-top:13px;padding-top:11px;border-top:1px solid var(--border);
+  display:flex;gap:14px;font-family:var(--mono);font-size:12px}
+.foot .axis{color:var(--dim)}
+.foot .num{color:var(--text)}
+.us{margin-top:8px;font-family:var(--mono);font-size:11px;color:var(--dim)}
+.nullval{color:var(--dim)!important}
+/* Kamera-Platzhalter */
+.cam{background:var(--surface);border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.cam .feed{aspect-ratio:4/3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+  background-image:repeating-linear-gradient(45deg,#11161b,#11161b 12px,#0e1318 12px,#0e1318 24px);color:var(--dim)}
+.cam .feed svg{width:46px;height:46px;opacity:.5}
+.cam .feed .t{font-family:var(--mono);font-size:12px;letter-spacing:1px}
+.cam .cap{padding:11px 14px;border-top:1px solid var(--border);font-family:var(--mono);font-size:11px;color:var(--muted)}
+.banner{margin:0 24px 0;padding:10px 14px;border-radius:8px;font-family:var(--mono);font-size:12px;
+  background:#2a2110;border:1px solid #5a4420;color:var(--amber);display:none}
+.banner.show{display:block}
+#cam-area .feed{aspect-ratio:4/3;height:clamp(260px,52vh,1200px);width:auto;max-width:100%;margin:0 auto}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>HEXAPOD</h1>
+    <span class="sub" id="robot-sub">— · —</span>
+  </div>
+  <div class="chips">
+    <div class="chip"><span class="dot off" id="conn-dot"></span><span id="conn-text">OFFLINE</span></div>
+    <div class="chip">POLL <b id="poll">—</b> Hz</div>
+    <div class="chip">ALTER <b id="age">—</b></div>
+    <div class="chip"><span class="dot" id="ok-dot"></span><span id="ok-text">—</span></div>
+    <div class="chip">STATE <b id="robot-state" style="color:var(--dim)">—</b></div>
+    <div class="chip">PI <b id="batt-pi">—</b> V</div>
+    <div class="chip">SRV <b id="batt-srv">—</b> V</div>
+    <a class="chip" href="/network" style="text-decoration:none;color:var(--teal);cursor:pointer">NETZWERK</a>
+  </div>
+</header>
+<div class="banner" id="banner"></div>
+<div class="banner" id="batt-banner" style="background:#3a1414;border-color:#7a2a2a;color:var(--red)"></div>
+<main class="pfd">
+  <div class="bezel" id="bezel-l">
+    <p class="section-label">Sequenz</p>
+    <button id="btn-powerup" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--amber)" title="Kaltstart aus Kalibrierposition">POWER UP</button>
+    <button id="btn-sync" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--teal)" title="Zustand auf STEHEND setzen (ohne Bewegung)">SYNC</button>
+    <button id="btn-standup" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">STAND UP</button>
+    <button id="btn-liedown" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">LIE DOWN</button>
+    <button id="btn-stance" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">STANCE</button>
+    <button id="btn-halt" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--red)">HALT</button>
+    <button id="btn-level" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">NIVELLIEREN</button>
+    <button id="btn-obstacle" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">HINDERNIS</button>
+    <span id="obst-info" style="font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:2px"></span>
+    <span id="cmd-status" style="font-family:var(--mono);font-size:11px;color:var(--dim);margin-top:4px"></span>
+    <p class="section-label" style="margin-top:10px">Gangart &middot; <span id="gait-cur" style="color:var(--teal);font-family:var(--mono)">TRIPOD</span></p>
+    <button id="gait-tripod" class="chip gait-btn" data-gait="tripod" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)" title="3+3 Beine, schnell">TRIPOD</button>
+    <button id="gait-tetrapod" class="chip gait-btn" data-gait="tetrapod" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)" title="2+2+2 Beine">TETRAPOD</button>
+    <button id="gait-ripple" class="chip gait-btn" data-gait="ripple" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)" title="1 Bein, kontralateral">RIPPLE</button>
+    <button id="gait-wave" class="chip gait-btn" data-gait="wave" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)" title="1 Bein, sehr stabil">WAVE</button>
+  </div>
+
+  <div id="cam-area">
+    <div class="cam">
+      <div class="feed" style="padding:0;background-image:none">
+        <img id="cam" alt="Kamera" style="width:100%;height:100%;object-fit:contain;display:block">
+      </div>
+      <div class="cap" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <select id="cam-res" style="background:var(--surface2);color:var(--text);border:1px solid var(--border);font-family:var(--mono);font-size:11px;border-radius:6px;padding:3px 6px">
+          <option value="640x480">640×480</option>
+          <option value="800x600">800×600</option>
+          <option value="1296x972">1296×972</option>
+        </select>
+        <label style="display:flex;align-items:center;gap:6px;flex:1;min-width:130px">PAN<input type="range" id="pan" min="-60" max="60" value="0" style="flex:1"><span id="pan-val" style="color:var(--text);min-width:34px;text-align:right">0°</span></label>
+        <label style="display:flex;align-items:center;gap:6px;flex:1;min-width:130px">TILT<input type="range" id="tilt" min="-40" max="70" value="0" style="flex:1"><span id="tilt-val" style="color:var(--text);min-width:34px;text-align:right">0°</span></label>
+        <button id="btn-cam-center" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text);font-size:11px">ZENTRIEREN</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="bezel" id="bezel-r">
+    <p class="section-label">LED</p>
+    <button id="led-auto" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">AUTO</button>
+    <button id="led-rainbow" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">REGENBOGEN</button>
+    <button id="led-off" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">AUS</button>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input type="color" id="led-color" value="#00aa40">
+      <button id="led-set" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text);flex:1">FARBE</button>
+    </div>
+    <p class="section-label" style="margin-top:10px">Gesten</p>
+    <button id="btn-wave" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">WINKEN</button>
+    <button id="btn-liftleg" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">BEIN HEBEN</button>
+    <button id="btn-mantis" class="chip" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">MÄNNCHEN</button>
+    <button id="btn-stepup" class="chip" title="Vorderbeine auf 68mm-Kante -- Roboter gerade davor stellen, Fussspitzen ~2cm vor der Kante!" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">STUFE↑ TEST</button>
+    <button id="btn-climbover" class="chip" title="Kompletter Ueberstieg ueber die 68mm-Box (21cm tief) -- Aufstellung wie beim Stufen-Test; dauert ~2 Minuten und ist nicht unterbrechbar!" style="cursor:pointer;background:var(--surface);font-family:var(--mono);font-size:12px;border:1px solid var(--border);color:var(--text)">ÜBERSTIEG</button>
+  </div>
+
+  <div id="ctl-area">
+    <div id="ctl-left">
+      <div class="card">
+        <div class="ch"><span class="name">MOVEMENT</span><span id="walk-dot" class="dot"></span></div>
+        <div style="display:flex;gap:16px;align-items:flex-start">
+          <div id="joy-pad" style="position:relative;width:120px;height:120px;flex:none;background:var(--surface2);border:1px solid var(--border);border-radius:8px;cursor:crosshair;touch-action:none">
+            <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--border);transform:translateX(-50%)"></div>
+            <div style="position:absolute;top:50%;left:0;right:0;height:1px;background:var(--border);transform:translateY(-50%)"></div>
+            <div id="joy-thumb" style="position:absolute;width:28px;height:28px;border-radius:50%;background:var(--teal);top:50%;left:50%;transform:translate(-50%,-50%);box-shadow:0 0 10px rgba(45,212,191,.4);pointer-events:none"></div>
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:10px">
+            <div><div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;margin-bottom:4px"><span style="color:var(--muted);letter-spacing:1px">DREHEN</span><span id="omega-val" style="color:var(--text)">0°</span></div><input type="range" id="omega" min="-30" max="30" value="0" style="width:100%"></div>
+            <div><div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;margin-bottom:4px"><span style="color:var(--muted);letter-spacing:1px">HÖHE</span><span id="height-val" style="color:var(--text)">30mm</span></div><input type="range" id="height" min="15" max="50" value="30" style="width:100%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="ctl-right">
+      <div class="card">
+        <div class="ch"><span class="name">POSE</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 18px">
+          <div><div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;margin-bottom:3px"><span style="color:var(--muted)">ROLL</span><span id="roll-val" style="color:var(--text)">0°</span></div><input type="range" id="roll" min="-20" max="20" value="0" style="width:100%"></div>
+          <div><div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;margin-bottom:3px"><span style="color:var(--muted)">PITCH</span><span id="pitch-val" style="color:var(--text)">0°</span></div><input type="range" id="pitch" min="-20" max="20" value="0" style="width:100%"></div>
+          <div><div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;margin-bottom:3px"><span style="color:var(--muted)">YAW</span><span id="yaw-val" style="color:var(--text)">0°</span></div><input type="range" id="yaw" min="-20" max="20" value="0" style="width:100%"></div>
+          <div><div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;margin-bottom:3px"><span style="color:var(--muted)">TZ</span><span id="tz-val" style="color:var(--text)">0mm</span></div><input type="range" id="tz" min="-20" max="40" value="0" style="width:100%"></div>
+          <div><div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;margin-bottom:3px"><span style="color:var(--muted)">TX</span><span id="tx-val" style="color:var(--text)">0mm</span></div><input type="range" id="tx" min="-30" max="30" value="0" style="width:100%"></div>
+          <div><div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;margin-bottom:3px"><span style="color:var(--muted)">TY</span><span id="ty-val" style="color:var(--text)">0mm</span></div><input type="range" id="ty" min="-30" max="30" value="0" style="width:100%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <details class="telem">
+    <summary>Beintelemetrie · Gelenkwinkel &amp; Fußposition (Fehlersuche)</summary>
+    <div class="legs" id="legs"></div>
+  </details>
+
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  // --- State ---
+  let joyVx = 0, joyVy = 0;
+  let walkTimer = null;
+  const WALK_HZ = 10;
+
+  // --- Helpers ---
+  function sendCmd(cmd) {
+    fetch('/command', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(cmd)
+    })
+    .then(r => r.json())
+    .then(d => {
+      const ok = d.accepted ? 'teal' : 'red';
+      $('cmd-status').innerHTML =
+        `<span style="color:var(--${ok})">&#9632;</span> id=${d.id} queued=${d.queued}`;
+    })
+    .catch(() => { $('cmd-status').textContent = 'fehler'; });
+  }
+
+  function sendWalk() {
+    sendCmd({
+      action: 'walk',
+      vx: Math.round(joyVx),
+      vy: Math.round(joyVy),
+      omega_deg: parseFloat($('omega').value),
+      height: parseFloat($('height').value),
+      steps: 30,
+      rate_hz: 40.0
+    });
+  }
+
+  function sendPose() {
+    sendCmd({
+      action: 'pose',
+      roll_deg:  parseFloat($('roll').value),
+      pitch_deg: parseFloat($('pitch').value),
+      yaw_deg:   parseFloat($('yaw').value),
+      tx: parseFloat($('tx').value),
+      ty: parseFloat($('ty').value),
+      tz: parseFloat($('tz').value)
+    });
+  }
+
+  function setWalkDot(active) {
+    $('walk-dot').className = 'dot ' + (active ? 'live' : '');
+  }
+
+  function startWalkLoop() {
+    if (walkTimer) return;
+    setWalkDot(true);
+    walkTimer = setInterval(sendWalk, 1000 / WALK_HZ);
+  }
+
+  function stopWalkLoop() {
+    if (walkTimer) { clearInterval(walkTimer); walkTimer = null; }
+    setWalkDot(false);
+    sendCmd({action: 'halt'});
+    // spring thumb back
+    const t = $('joy-thumb');
+    t.style.transition = 'transform .15s ease';
+    t.style.transform = 'translate(-50%,-50%)';
+    setTimeout(() => { t.style.transition = ''; }, 160);
+  }
+
+  // --- Joystick ---
+  const pad = $('joy-pad');
+  const thumb = $('joy-thumb');
+  let dragging = false;
+
+  function joyMove(cx, cy) {
+    const r = pad.getBoundingClientRect();
+    const hw = r.width / 2, hh = r.height / 2;
+    let dx = cx - (r.left + hw);
+    let dy = cy - (r.top + hh);
+    const maxR = hw - 16;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist > maxR) { dx = dx/dist*maxR; dy = dy/dist*maxR; }
+    thumb.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    joyVx = -(dy / maxR) * 40;   // oben = vorwärts (vx+)
+    joyVy = -(dx / maxR) * 40;   // rechts = rechts (vy-)
+  }
+
+  pad.addEventListener('pointerdown', e => {
+    e.preventDefault(); pad.setPointerCapture(e.pointerId);
+    dragging = true; joyMove(e.clientX, e.clientY); startWalkLoop();
+  });
+  pad.addEventListener('pointermove', e => {
+    if (!dragging) return; joyMove(e.clientX, e.clientY);
+  });
+  pad.addEventListener('pointerup',   () => { dragging = false; joyVx = 0; joyVy = 0; stopWalkLoop(); });
+  pad.addEventListener('pointercancel',() => { dragging = false; joyVx = 0; joyVy = 0; stopWalkLoop(); });
+
+  // Omega/Height während aktiver Fahrt sofort wirksam (kein extra sendWalk nötig,
+  // der Walk-Timer holt die Werte frisch)
+  $('omega').addEventListener('input', () => {
+    $('omega-val').textContent = $('omega').value + '°';
+  });
+  $('height').addEventListener('input', () => {
+    $('height-val').textContent = $('height').value + 'mm';
+  });
+
+  // Pose sliders
+  [['roll','°'],['pitch','°'],['yaw','°'],['tx','mm'],['ty','mm'],['tz','mm']].forEach(([id,unit]) => {
+    $(id).addEventListener('input', () => {
+      $(id+'-val').textContent = $(id).value + unit;
+      sendPose();
+    });
+  });
+
+  // Action buttons
+  $('btn-powerup').addEventListener('click', () => {
+    if (!confirm('Kaltstart: Beine flach in Kalibrierposition?')) return;
+    stopWalkLoop(); sendCmd({action:'power_up'});
+  });
+  $('btn-standup').addEventListener('click', () => { stopWalkLoop(); sendCmd({action:'stand_up'}); });
+  $('btn-liedown').addEventListener('click', () => { stopWalkLoop(); sendCmd({action:'lie_down'}); });
+  $('btn-stance').addEventListener('click',  () => {
+    sendCmd({action:'stance'});
+    // Pose-Slider zuruecksetzen: der Roboter kehrt in die neutrale Standpose
+    ['roll','pitch','yaw','tx','ty','tz'].forEach(id => {
+      $(id).value = 0;
+      $(id+'-val').textContent = '0' + (['tx','ty','tz'].includes(id)?'mm':'°');
+    });
+  });
+  $('btn-sync').addEventListener('click',    () => sendCmd({action:'assume_standing'}));
+  let levelOn = false;
+  $('btn-level').addEventListener('click', () => {
+    levelOn = !levelOn;
+    sendCmd({action:'level', on: levelOn});
+    const b = $('btn-level');
+    b.style.color = levelOn ? 'var(--teal)' : 'var(--text)';
+    b.textContent = levelOn ? 'NIVELLIEREN \u25CF' : 'NIVELLIEREN';
+  });
+  let obstacleOn = false;
+  $('btn-obstacle').addEventListener('click', () => {
+    obstacleOn = !obstacleOn;
+    sendCmd({action:'obstacle', on: obstacleOn});
+    const b = $('btn-obstacle');
+    b.style.color = obstacleOn ? 'var(--teal)' : 'var(--text)';
+    b.textContent = obstacleOn ? 'HINDERNIS \u25CF' : 'HINDERNIS';
+  });
+
+  // --- LED-Ring ---
+  function setLed(b){ fetch('/led',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}); }
+  $('led-auto').addEventListener('click', () => setLed({mode:'auto'}));
+  $('led-rainbow').addEventListener('click', () => setLed({mode:'rainbow'}));
+  $('led-off').addEventListener('click', () => setLed({mode:'off'}));
+  $('led-set').addEventListener('click', () => { const c=$('led-color').value; setLed({mode:'manual', r:parseInt(c.substr(1,2),16), g:parseInt(c.substr(3,2),16), b:parseInt(c.substr(5,2),16)}); });
+  $('btn-wave').addEventListener('click',    () => sendCmd({action:'gesture', gesture:'wave'}));
+  $('btn-liftleg').addEventListener('click', () => sendCmd({action:'gesture', gesture:'lift_leg'}));
+  $('btn-mantis').addEventListener('click',  () => sendCmd({action:'gesture', gesture:'mantis'}));
+  $('btn-stepup').addEventListener('click',  () => sendCmd({action:'gesture', gesture:'step_up_test'}));
+  $('btn-climbover').addEventListener('click',() => sendCmd({action:'gesture', gesture:'climb_over'}));
+
+  // --- Kamera ---
+  const camImg = $('cam');
+  function startCam() {
+    const [w,h] = $('cam-res').value.split('x');
+    camImg.src = `/camera/stream?w=${w}&h=${h}&fps=20&q=80&t=${Date.now()}`;
+  }
+  $('cam-res').addEventListener('change', startCam);
+  let camTimer = null, camPending = false;
+  function sendCam() {
+    if (camTimer) { camPending = true; return; }
+    sendCmd({action:'camera', pan_deg: parseFloat($('pan').value), tilt_deg: parseFloat($('tilt').value)});
+    camTimer = setTimeout(() => { camTimer = null; if (camPending) { camPending = false; sendCam(); } }, 90);
+  }
+  [['pan','\u00b0'],['tilt','\u00b0']].forEach(([id,unit]) => {
+    $(id).addEventListener('input', () => {
+      $(id+'-val').textContent = $(id).value + unit;
+      sendCam();
+    });
+  });
+  $('btn-cam-center').addEventListener('click', () => {
+    $('pan').value = 0; $('tilt').value = 0;
+    $('pan-val').textContent = '0\u00b0'; $('tilt-val').textContent = '0\u00b0';
+    sendCmd({action:'camera', pan_deg: 0, tilt_deg: 0});
+  });
+  startCam();
+  $('btn-halt').addEventListener('click',   () => { stopWalkLoop(); });
+
+  // --- Gangart-Auswahl ---
+  // Wechsel laeuft serverseitig IMMER ueber die Standpose; bei gehaltenem
+  // Joystick nimmt der Walk-Loop danach mit der neuen Gangart wieder auf.
+  document.querySelectorAll('.gait-btn').forEach(b => {
+    b.addEventListener('click', () => sendCmd({action:'set_gait', gait:b.dataset.gait}));
+  });
+  window.updateGaitButtons = function updateGaitButtons(active){
+    document.querySelectorAll('.gait-btn').forEach(b => {
+      const on = b.dataset.gait === active;
+      b.style.borderColor = on ? 'var(--teal)' : 'var(--border)';
+      b.style.color       = on ? 'var(--teal)' : 'var(--text)';
+      b.style.background   = on ? 'var(--surface2)' : 'var(--surface)';
+    });
+    const cur = $('gait-cur'); if (cur) cur.textContent = (active||'tripod').toUpperCase();
+  }
+})();
+</script>
+
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const RANGES={coxa:[-60,60],femur:[-30,120],tibia:[0,180]};
+const JOINTS=['coxa','femur','tibia'];
+let lastFrame=0, connected=false;
+
+function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+function norm(joint,deg){const[a,b]=RANGES[joint];return clamp((deg-a)/(b-a),0,1);}
+
+function legCard(leg){
+  const deg=leg.angles_deg, foot=leg.foot_leg_frame_mm, us=leg.servo_us||[];
+  const degraded=!deg;
+  let joints='';
+  JOINTS.forEach((j,i)=>{
+    const v=deg?deg[i]:null;
+    const txt=v==null?'<span class="nullval">—</span>':v.toFixed(1)+'°';
+    const w=v==null?0:norm(j,v)*100;
+    joints+=`<div class="joint"><div class="row"><span class="lbl">${j.toUpperCase()}</span><span class="val">${txt}</span></div><div class="bar"><span style="width:${w}%"></span></div></div>`;
+  });
+  const fx=foot?foot[0].toFixed(0):'—',fy=foot?foot[1].toFixed(0):'—',fz=foot?foot[2].toFixed(0):'—';
+  const usTxt=us.map(u=>u==null?'—':Math.round(u)).join(' / ');
+  return `<div class="card ${degraded?'degraded':''}">
+    <div class="ch"><span class="name">${leg.name.toUpperCase()}</span><span class="dot ${degraded?'stale':'live'}"></span></div>
+    ${joints}
+    <div class="foot"><span><span class="axis">X </span><span class="num">${fx}</span></span><span><span class="axis">Y </span><span class="num">${fy}</span></span><span><span class="axis">Z </span><span class="num">${fz}</span> mm</span></div>
+    <div class="us">µs ${usTxt}</div>
+  </div>`;
+}
+
+function render(snap){
+  lastFrame=Date.now();
+  $('legs').innerHTML=(snap.legs||[]).map(legCard).join('');
+  const ok=snap.ok;
+  $('ok-dot').className='dot '+(ok?'live':'stale');
+  $('ok-text').textContent=ok?'ALLE OK':'DEGRADIERT';
+  const b=$('banner');
+  if(ok){b.classList.remove('show');}
+  else{b.textContent='Einige Beine ohne Signal — Servos vermutlich stromlos. Erst `power-up` ausführen.';b.classList.add('show');}
+}
+
+function setConn(state){
+  const d=$('conn-dot'),t=$('conn-text');
+  d.className='dot '+(state==='live'?'live':state==='stale'?'stale':'off');
+  t.textContent=state==='live'?'LIVE':state==='stale'?'STALE':'OFFLINE';
+}
+
+async function fetchStatus(){
+  try{
+    const r=await fetch('status');const s=await r.json();
+    $('robot-sub').textContent=`${s.robot_name} · ${s.driver_type}`;
+    const stateColors={'off':'var(--dim)','standing':'var(--green)','walking':'var(--teal)','lying':'var(--amber)'};
+    const stateEl = $('robot-state');
+    if(stateEl){ stateEl.textContent=s.robot_state.toUpperCase(); stateEl.style.color=stateColors[s.robot_state]||'var(--text)'; }
+    // Buttons je State en/disablen
+    const allowed={'off':['btn-powerup','btn-sync'],'standing':['btn-standup','btn-liedown','btn-stance','btn-halt','btn-wave','btn-liftleg','btn-mantis','btn-stepup','btn-climbover'],'walking':['btn-halt'],'lying':['btn-standup']};
+    const allBtns=['btn-powerup','btn-sync','btn-standup','btn-liedown','btn-stance','btn-halt','btn-wave','btn-liftleg','btn-mantis','btn-stepup','btn-climbover'];
+    const ok=allowed[s.robot_state]||[];
+    allBtns.forEach(id=>{const b=$(id);if(b){b.disabled=!ok.includes(id);b.style.opacity=ok.includes(id)?'1':'0.3';b.style.cursor=ok.includes(id)?'pointer':'not-allowed';}});
+    $('poll').textContent=s.poll_rate_hz;
+    updateGaitButtons(s.gait||'tripod');
+    // Batterie
+    const bat=s.battery||{}, bst=s.battery_state||{};
+    const col={ok:'var(--green)',warn:'var(--amber)',critical:'var(--red)',absent:'var(--dim)'};
+    function setBat(id,v,st){const e=$(id);if(!e)return;e.textContent=(v==null?'\u2014':Number(v).toFixed(1));e.style.color=col[st]||'var(--text)';}
+    setBat('batt-pi',bat.pi,bst.pi); setBat('batt-srv',bat.servo,bst.servo);
+    const bb=$('batt-banner');
+    if(bb){const probs=[];
+      if(bst.pi==='critical')probs.push('Pi-Akku KRITISCH');else if(bst.pi==='warn')probs.push('Pi-Akku schwach');
+      if(bst.servo==='critical')probs.push('Servo-Akku KRITISCH');else if(bst.servo==='warn')probs.push('Servo-Akku schwach');
+      if(probs.length){bb.textContent='\u26A0 '+probs.join(' \u00B7 ')+' \u2014 bitte laden/pruefen';bb.classList.add('show');}else{bb.classList.remove('show');}}
+    // Hindernis-Sonar
+    const ob=s.obstacle||{}; const oi=$('obst-info');
+    if(oi){
+      if(!ob.guard){ oi.textContent=''; }
+      else {
+        const d = ob.distance==null ? '\u2014' : Number(ob.distance).toFixed(2)+'m';
+        const dirmap={left:'\u2190 links frei',right:'rechts frei \u2192',none:'beide blockiert'};
+        let txt='Sonar '+d;
+        if(ob.scanning) txt+=' \u00b7 scanne\u2026';
+        else if(ob.blocked) txt+=' \u00b7 STOP \u00b7 '+(dirmap[ob.free_dir]||'');
+        oi.textContent=txt;
+        oi.style.color = ob.blocked ? 'var(--red)' : 'var(--dim)';
+      }
+    }
+  }catch(e){}
+}
+
+function connectWS(){
+  const proto=location.protocol==='https:'?'wss':'ws';
+  const ws=new WebSocket(`${proto}://${location.host}/ws/telemetry`);
+  ws.onopen=()=>{connected=true;setConn('live');};
+  ws.onmessage=ev=>{try{render(JSON.parse(ev.data));setConn('live');}catch(e){}};
+  ws.onclose=()=>{connected=false;setConn('off');setTimeout(connectWS,2000);};
+  ws.onerror=()=>{try{ws.close();}catch(e){}};
+}
+
+setInterval(()=>{
+  if(!connected)return;
+  const age=(Date.now()-lastFrame)/1000;
+  $('age').textContent=age<99?age.toFixed(1)+'s':'—';
+  if(age>3)setConn('stale');else setConn('live');
+},250);
+
+fetchStatus();setInterval(fetchStatus,5000);connectWS();
+</script>
+</body>
+</html>

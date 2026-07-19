@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hexapod · Netzwerk</title>
+<style>
+:root{--bg:#0b0e11;--surface:#14191f;--surface2:#1b2128;--border:#252e37;
+--text:#e7edf3;--muted:#7c8794;--dim:#46505b;--teal:#2dd4bf;--amber:#f0a830;
+--red:#ef5350;--green:#34d399;--mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;min-height:100vh}
+header{display:flex;justify-content:space-between;align-items:center;gap:16px;
+padding:16px 22px;border-bottom:1px solid var(--border);position:sticky;top:0;background:rgba(11,14,17,.9)}
+h1{margin:0;font-size:20px;letter-spacing:2px}
+a.back{color:var(--teal);text-decoration:none;font-family:var(--mono);font-size:13px}
+main{max-width:820px;margin:0 auto;padding:18px 16px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;margin:12px 0;overflow:hidden}
+.chead{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer}
+.chead:hover{background:var(--surface2)}
+.iface{font-family:var(--mono);font-weight:600;font-size:15px;min-width:64px}
+.badge{font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:5px;border:1px solid var(--border)}
+.b-client{color:var(--green);border-color:#2c5} .b-ap{color:var(--amber);border-color:#a83}
+.b-off{color:var(--dim)}
+.meta{font-family:var(--mono);font-size:12px;color:var(--muted);flex:1;text-align:right}
+.body{display:none;padding:6px 16px 16px;border-top:1px solid var(--border)}
+.body.open{display:block}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+button{cursor:pointer;background:var(--surface2);color:var(--text);border:1px solid var(--border);
+border-radius:6px;font-family:var(--mono);font-size:12px;padding:7px 12px}
+button:hover{border-color:var(--teal)} button.warn{color:var(--red)}
+button.go{color:var(--teal)}
+.net{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);
+border-radius:6px;margin:5px 0;cursor:pointer;background:var(--surface2)}
+.net:hover{border-color:var(--teal)} .net.act{border-color:var(--green)}
+.net .ssid{flex:1;font-family:var(--mono);font-size:13px}
+.net .sig{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.net .lock{font-size:11px;color:var(--dim)}
+input{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:6px;
+font-family:var(--mono);font-size:13px;padding:7px 10px}
+.form{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.hint{font-family:var(--mono);font-size:11px;color:var(--muted);margin:6px 0}
+.warnbox{background:#3a2a10;border:1px solid #7a5a1a;color:var(--amber);border-radius:6px;
+padding:8px 10px;font-family:var(--mono);font-size:11px;margin:8px 0}
+#msg{font-family:var(--mono);font-size:12px;color:var(--muted);min-height:18px;margin-top:10px}
+.section-label{font-family:var(--mono);font-size:11px;color:var(--dim);letter-spacing:1px;margin:12px 0 4px}
+</style>
+</head>
+<body>
+<header>
+  <h1>NETZWERK</h1>
+  <a class="back" href="/">&larr; zurück zur Steuerung</a>
+</header>
+<main>
+  <div class="hint">Klick auf einen Adapter zeigt Details und Aktionen. Zwei Adapter =
+  einer kann im Heimnetz bleiben, während der andere einen Hotspot aufmacht.</div>
+  <div id="cards"></div>
+  <div id="msg"></div>
+</main>
+<script>
+const $=s=>document.querySelector(s);
+let uplinkIface=null; const cards={};   // iface -> {card, badge, meta, warn}
+function msg(t,err){const m=$('#msg');m.textContent=t;m.style.color=err?'var(--red)':'var(--muted)';}
+async function api(path,opt){const r=await fetch(path,opt);
+  if(!r.ok){let d;try{d=(await r.json()).detail}catch(e){d=r.statusText} throw new Error(d||('HTTP '+r.status));}
+  return r.status===204?null:r.json();}
+
+function badgeInfo(m){return {client:['b-client','CLIENT'],ap:['b-ap','HOTSPOT'],off:['b-off','AUS']}[m]||['b-off','AUS'];}
+function metaText(d){return d.mode==='client'?`${d.connection} · ${d.ip||'—'}`
+  :d.mode==='ap'?`AP · ${d.ip||'10.42.0.1'}`:'nicht verbunden';}
+function warnHtml(iface){return iface===uplinkIface
+  ?'<div class="warnbox">Achtung: Dieser Adapter trägt gerade deine Verbindung zur Steuerung. Änderungen hier können die Seite trennen.</div>':'';}
+
+function buildCard(d){
+  const card=document.createElement('div');card.className='card';
+  const [bc,bt]=badgeInfo(d.mode);
+  card.innerHTML=`
+    <div class="chead">
+      <span class="iface">${d.iface}</span>
+      <span class="badge ${bc}">${bt}</span>
+      <span class="meta">${metaText(d)}</span>
+    </div>
+    <div class="body" data-iface="${d.iface}">
+      <div class="warnslot">${warnHtml(d.iface)}</div>
+      <div class="row">
+        <button class="go" data-act="scan" data-if="${d.iface}">Netz suchen</button>
+        <button data-act="apform" data-if="${d.iface}">Als Hotspot</button>
+        <button class="warn" data-act="disc" data-if="${d.iface}">Trennen</button>
+      </div>
+      <div class="scan" data-if="${d.iface}"></div>
+      <div class="apbox" data-if="${d.iface}" style="display:none">
+        <div class="section-label">HOTSPOT STARTEN</div>
+        <div class="form">
+          <input class="ap-ssid" placeholder="SSID" value="Hexapod-${d.iface}" autocomplete="off">
+          <input class="ap-pw" type="password" placeholder="Passwort (min. 8)" autocomplete="off">
+          <button class="go" data-act="aprun" data-if="${d.iface}">Starten</button>
+        </div>
+      </div>
+    </div>`;
+  card.querySelector('.chead').onclick=e=>{
+    // Klick auf die Kopfzeile klappt auf/zu -- aber nicht beim Klick in Felder
+    card.querySelector('.body').classList.toggle('open');};
+  card.querySelectorAll('button[data-act]').forEach(b=>b.onclick=onAct);
+  $('#cards').appendChild(card);
+  cards[d.iface]={card,badge:card.querySelector('.badge'),
+                  meta:card.querySelector('.meta'),warn:card.querySelector('.warnslot')};
+}
+function updateCard(d){
+  const c=cards[d.iface]; if(!c)return;
+  const [bc,bt]=badgeInfo(d.mode);
+  c.badge.className='badge '+bc; c.badge.textContent=bt;
+  c.meta.textContent=metaText(d);
+  c.warn.innerHTML=warnHtml(d.iface);
+}
+
+async function loadStatus(){
+  // Nicht aktualisieren, waehrend jemand tippt (sonst stoert es die Eingabe nicht,
+  // aber wir vermeiden jegliches Rendern zur Sicherheit).
+  if(document.activeElement && document.activeElement.tagName==='INPUT') return;
+  let data;
+  try{data=await api('/net/status');}catch(e){msg('Status-Fehler: '+e.message,true);return;}
+  uplinkIface=(data.find(d=>d.mode==='client'&&d.connected)||{}).iface||null;
+  const have=Object.keys(cards).sort().join(','); const now=data.map(d=>d.iface).sort().join(',');
+  if(have!==now){$('#cards').innerHTML='';for(const k in cards)delete cards[k];data.forEach(buildCard);}
+  else data.forEach(updateCard);
+}
+
+async function onAct(e){
+  const b=e.currentTarget, act=b.dataset.act, iface=b.dataset.if;
+  try{
+    if(act==='scan'){msg('Suche Netze auf '+iface+' …');
+      const nets=await api('/net/scan?iface='+encodeURIComponent(iface));
+      renderScan(iface,nets);msg(nets.length+' Netze gefunden.');}
+    else if(act==='apform'){const box=document.querySelector(`.apbox[data-if="${iface}"]`);
+      box.style.display=box.style.display==='none'?'block':'none';}
+    else if(act==='aprun'){
+      const box=document.querySelector(`.apbox[data-if="${iface}"]`);
+      const ssid=box.querySelector('.ap-ssid').value, pw=box.querySelector('.ap-pw').value;
+      if(pw.length<8){msg('Hotspot-Passwort braucht mindestens 8 Zeichen.',true);return;}
+      msg('Starte Hotspot auf '+iface+' …');
+      await api('/net/hotspot',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({iface,ssid,password:pw})});
+      msg('Hotspot läuft: '+ssid);setTimeout(loadStatus,1500);}
+    else if(act==='disc'){msg('Trenne '+iface+' …');
+      await api('/net/disconnect',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({iface})});
+      msg(iface+' getrennt.');setTimeout(loadStatus,1200);}
+  }catch(err){msg('Fehler: '+err.message,true);}
+}
+
+function renderScan(iface,nets){
+  const box=document.querySelector(`.scan[data-if="${iface}"]`);
+  box.innerHTML='<div class="section-label">GEFUNDENE NETZE</div>';
+  for(const n of nets){
+    const el=document.createElement('div');el.className='net'+(n.active?' act':'');
+    el.innerHTML=`<span class="ssid">${n.ssid}</span>
+      <span class="lock">${n.security==='open'?'offen':'🔒'}</span>
+      <span class="sig">${n.signal}%</span>`;
+    el.onclick=()=>connectForm(iface,n,box);
+    box.appendChild(el);
+  }
+}
+function connectForm(iface,n,box){
+  const old=box.querySelector('.cform');if(old)old.remove();
+  const f=document.createElement('div');f.className='form cform';
+  f.innerHTML = n.security==='open'
+    ? `<span class="hint">Mit "${n.ssid}" verbinden?</span><button class="go">Verbinden</button>`
+    : `<input type="password" placeholder="Passwort für ${n.ssid}" autocomplete="off"><button class="go">Verbinden</button>`;
+  const btn=f.querySelector('button'), pw=f.querySelector('input');
+  btn.onclick=async()=>{try{msg('Verbinde mit '+n.ssid+' …');
+    await api('/net/connect',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({iface,ssid:n.ssid,password:pw?pw.value:''})});
+    msg('Verbunden mit '+n.ssid+' (Seite lädt evtl. neu).');setTimeout(loadStatus,1800);
+  }catch(err){msg('Fehler: '+err.message,true);}};
+  box.appendChild(f);
+  if(pw)pw.focus();
+}
+loadStatus();setInterval(loadStatus,5000);
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+.venv/
+models/
+*.pt
+*.onnx
+*.engine
+sample.jpg
+__pycache__/
+*.pyc

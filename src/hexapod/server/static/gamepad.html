@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Hexapod · Gamepad</title>
+<style>
+:root{--bg:#0b0e11;--surface:#14191f;--surface2:#1b2128;--border:#252e37;--text:#e7edf3;--muted:#7c8794;--dim:#46505b;--teal:#2dd4bf;--amber:#f0a830;--red:#ef5350;--green:#34d399;--mono:ui-monospace,Menlo,monospace}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden;overscroll-behavior:none;touch-action:manipulation}
+body{position:fixed;inset:0;background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;-webkit-user-select:none;user-select:none}
+button:focus{outline:none}
+header{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--border)}
+h1{margin:0;font-size:16px;letter-spacing:2px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--dim);display:inline-block;margin-right:6px}
+.dot.on{background:var(--green);box-shadow:0 0 8px var(--green)}
+.dot.off{background:var(--red)}
+main{padding:10px;display:flex;flex-direction:column;gap:10px;overflow:hidden}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+button{flex:1;min-width:84px;padding:13px 8px;border:1px solid var(--border);border-radius:10px;background:var(--surface2);color:var(--text);font-family:var(--mono);font-size:13px}
+button:active{background:#26303a}
+button.amber{color:var(--amber)} button.red{color:var(--red)}
+.kv{font-family:var(--mono);font-size:12px;color:var(--muted);display:flex;justify-content:space-between;padding:1px 0}
+.kv b{color:var(--text)}
+.mode{font-family:var(--mono);font-size:12px;padding:2px 8px;border-radius:6px;background:var(--surface2);border:1px solid var(--border)}
+.mode.pose{color:var(--amber);border-color:#5a4420}
+.mon{font-family:var(--mono);font-size:11px;color:var(--teal);white-space:pre-wrap;word-break:break-all;line-height:1.5}
+.banner{padding:9px;border-radius:8px;background:#2a2110;border:1px solid #5a4420;color:var(--amber);font-family:var(--mono);font-size:12px;text-align:center}
+.sub{font-family:var(--mono);font-size:10px;color:var(--dim)}
+</style>
+</head>
+<body>
+<header>
+  <h1>HEXAPOD · GAMEPAD</h1>
+  <div><span class="dot off" id="gpdot"></span><span style="font-family:var(--mono);font-size:12px" id="gpname">kein Pad</span></div>
+</header>
+<main>
+  <div class="banner" id="connbanner">Funke per USB anstecken und <b>eine Taste drücken</b>.</div>
+  <div class="card">
+    <div class="kv"><span>Status</span><b id="rstate">—</b></div>
+    <div class="kv"><span>Gangart</span><b id="rgait">—</b></div>
+    <div class="kv"><span>Modus</span><span class="mode" id="mode">BEWEGUNG</span></div>
+    <div class="kv"><span>walk vx/vy/ω·h</span><b id="cmdvals">—</b></div>
+    <div class="kv"><span>pose r/p/y·tx/ty/tz</span><b id="posevals">—</b></div>
+  </div>
+  <div class="card">
+    <div class="row" style="margin-bottom:8px">
+      <button tabindex="-1" class="amber" data-cmd="power_up">POWER UP</button>
+      <button tabindex="-1" data-cmd="stand_up">STAND</button>
+      <button tabindex="-1" data-cmd="lie_down">LIE</button>
+    </div>
+    <div class="row">
+      <button tabindex="-1" data-cmd="stance">STANCE</button>
+      <button tabindex="-1" class="red" data-cmd="halt">HALT</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="sub" style="margin-bottom:6px">MONITOR</div>
+    <div class="mon" id="mon">—</div>
+  </div>
+</main>
+<script>
+const M = {
+  AX_VX:1, AX_VY:3, AX_OMEGA:0, AX_HEIGHT:2, AX_GAIT:4, AX_TZ:5, AX_TX:6, AX_TY:7,
+  INV_VX:false, INV_VY:true, INV_OMEGA:true, INV_HEIGHT:false, INV_TZ:false, INV_TX:false, INV_TY:false,
+  BTN_MODE:6, BTN_HALT:8, BTN_POSE_HOLD:5, BTN_POSTURE:-1,
+  VX_MAX:40, VY_MAX:40, OMEGA_MAX:30, HEIGHT_MIN:15, HEIGHT_MAX:50,
+  TZ_MIN:-20, TZ_MAX:40, TX_MIN:-30, TX_MAX:30, TY_MIN:-30, TY_MAX:30,
+  ROLL_MAX:18, PITCH_MAX:18, YAW_MAX:18, DEADZONE:0.08, RATE_HZ:15, WALK_STEPS:30, WALK_RATE_HZ:40,
+};
+const GAITS=["tripod","tetrapod","ripple","wave"];
+const $=id=>document.getElementById(id);
+function applyv(v,inv,dz){ if(inv)v=-v; if(Math.abs(v)<dz)return 0; const s=(Math.abs(v)-dz)/(1-dz); return (v>0?1:-1)*s; }
+function ax(gp,i){ return (i>=0 && i<gp.axes.length)?gp.axes[i]:0; }
+function pot(gp,i,inv,lo,hi){ if(i<0||i>=gp.axes.length)return 0; return lo+(applyv(ax(gp,i),inv,0)+1)/2*(hi-lo); }
+function bpressed(gp,i){ return (i>=0 && i<gp.buttons.length)?gp.buttons[i].pressed:false; }
+let prev={};
+function edge(gp,i){ if(i<0)return 0; const now=bpressed(gp,i); const was=prev[i]||false; prev[i]=now; return (now&&!was)?1:((was&&!now)?-1:0); }
+function post(cmd){ fetch("command",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cmd)}).catch(()=>{}); }
+document.querySelectorAll("button[data-cmd]").forEach(b=>{ b.addEventListener("click",()=>{ const a=b.dataset.cmd; post({action:a}); if(a==="halt")walking=false; }); });
+let walking=false, gaitIdx=0, heldRpy=[0,0,0], lastPose=null, lastSend=0;
+function getGP(){ const gs=navigator.getGamepads?navigator.getGamepads():[]; for(const g of gs){ if(g)return g; } return null; }
+function loop(t){
+  const gp=getGP();
+  if(gp){
+    if(document.activeElement&&document.activeElement.tagName==="BUTTON")document.activeElement.blur();
+    $("gpdot").className="dot on"; $("gpname").textContent=(gp.id||"Pad").slice(0,18); $("connbanner").style.display="none";
+    if(M.AX_GAIT>=0 && M.AX_GAIT<gp.axes.length){ const gv=ax(gp,M.AX_GAIT); const gi=Math.max(0,Math.min(GAITS.length-1,Math.round((gv+1)/2*(GAITS.length-1)))); if(gi!==gaitIdx){ gaitIdx=gi; post({action:"set_gait",gait:GAITS[gi]}); } }
+    if(edge(gp,M.BTN_HALT)>0){ post({action:"halt"}); walking=false; }
+    const pe=edge(gp,M.BTN_POSTURE); if(pe>0)post({action:"stand_up"}); else if(pe<0)post({action:"lie_down"});
+    const tz=pot(gp,M.AX_TZ,M.INV_TZ,M.TZ_MIN,M.TZ_MAX), tx=pot(gp,M.AX_TX,M.INV_TX,M.TX_MIN,M.TX_MAX), ty=pot(gp,M.AX_TY,M.INV_TY,M.TY_MIN,M.TY_MAX);
+    const poseMode = M.BTN_MODE>=0 && bpressed(gp,M.BTN_MODE);
+    let roll=0,pitch=0,yaw=0;
+    if(poseMode){
+      const lr=applyv(ax(gp,M.AX_VY),M.INV_VY,M.DEADZONE)*M.ROLL_MAX, lp=applyv(ax(gp,M.AX_VX),M.INV_VX,M.DEADZONE)*M.PITCH_MAX, ly=applyv(ax(gp,M.AX_OMEGA),M.INV_OMEGA,M.DEADZONE)*M.YAW_MAX;
+      if(edge(gp,M.BTN_POSE_HOLD)>0)heldRpy=[lr,lp,ly];
+      if(Math.abs(lr)>0||Math.abs(lp)>0||Math.abs(ly)>0){roll=lr;pitch=lp;yaw=ly;}else{[roll,pitch,yaw]=heldRpy;}
+      if(walking){post({action:"halt"});walking=false;}
+      $("mode").textContent="POSE";$("mode").className="mode pose";$("cmdvals").textContent="—";
+    } else {
+      [roll,pitch,yaw]=heldRpy;
+      const vx=applyv(ax(gp,M.AX_VX),M.INV_VX,M.DEADZONE)*M.VX_MAX, vy=applyv(ax(gp,M.AX_VY),M.INV_VY,M.DEADZONE)*M.VY_MAX, om=applyv(ax(gp,M.AX_OMEGA),M.INV_OMEGA,M.DEADZONE)*M.OMEGA_MAX;
+      let height=30; if(M.AX_HEIGHT>=0&&M.AX_HEIGHT<gp.axes.length)height=M.HEIGHT_MIN+(applyv(ax(gp,M.AX_HEIGHT),M.INV_HEIGHT,0)+1)/2*(M.HEIGHT_MAX-M.HEIGHT_MIN);
+      const moving=Math.abs(vx)>0||Math.abs(vy)>0||Math.abs(om)>0;
+      if(t-lastSend>1000/M.RATE_HZ){ if(moving){post({action:"walk",vx:+vx.toFixed(1),vy:+vy.toFixed(1),omega_deg:+om.toFixed(1),height:+height.toFixed(1),steps:M.WALK_STEPS,rate_hz:M.WALK_RATE_HZ});walking=true;}else if(walking){post({action:"halt"});walking=false;} }
+      $("mode").textContent="BEWEGUNG";$("mode").className="mode";$("cmdvals").textContent=vx.toFixed(0)+" / "+vy.toFixed(0)+" / "+om.toFixed(0)+" · "+height.toFixed(0);
+    }
+    const tp=[roll,pitch,yaw,tx,ty,tz].map(v=>Math.round(v*2)/2);
+    $("posevals").textContent=tp[0]+" "+tp[1]+" "+tp[2]+" · "+tp[3]+" "+tp[4]+" "+tp[5];
+    if(t-lastSend>1000/M.RATE_HZ){ const key=tp.join(","); if(key!==lastPose){post({action:"pose",roll_deg:tp[0],pitch_deg:tp[1],yaw_deg:tp[2],tx:tp[3],ty:tp[4],tz:tp[5]});lastPose=key;} lastSend=t; }
+    const a=gp.axes.map((v,i)=>i+":"+v.toFixed(2)).join("  ");
+    const b=gp.buttons.map((x,i)=>x.pressed?i:-1).filter(i=>i>=0).join(",");
+    $("mon").textContent="id: "+(gp.id||"?")+"\nmapping: "+(gp.mapping||"(raw)")+"   Achsen: "+gp.axes.length+"   Tasten: "+gp.buttons.length+"\nAchsen "+a+"\nTasten an: "+(b||"-");
+  } else {
+    $("gpdot").className="dot off"; $("gpname").textContent="kein Pad"; $("connbanner").style.display="block";
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+function failsafe(){ post({action:"halt"}); walking=false; }
+document.addEventListener("visibilitychange",()=>{ if(document.hidden)failsafe(); });
+window.addEventListener("pagehide",failsafe);
+async function pollStatus(){ try{ const r=await fetch("status"); const s=await r.json(); $("rstate").textContent=s.robot_state.toUpperCase(); $("rgait").textContent=(s.gait||"").toUpperCase(); }catch(e){} }
+setInterval(pollStatus,3000); pollStatus();
+</script>
+</body>
+</html>
