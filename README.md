@@ -113,7 +113,7 @@ Tibia runter, Füße über die Standpunkte, dann langsames Heben des Körpers
 
 Die **Feineinstellung** einzelner Gelenke erfolgt später im Betrieb über
 `uv run hexapod trim` bzw. `stance-trim`. Ein 3D-druckbares **Kalibrierungsrig**
-(STL) für reproduzierbare Referenzwinkel folgt in Kürze im Repo.
+für reproduzierbare Referenzwinkel liegt unter [`tools/CalibrationJig.stl`](tools/CalibrationJig.stl).
 
 **Sicherheitshinweis:** Nach dem Einschalten kennt der Controller die
 mechanische Lage der Beine nicht. Die Software fährt deshalb beim Aufstehen
@@ -138,7 +138,7 @@ Commit-Konvention: deutsche Conventional Commits (`feat(gait): ...`).
 - [x] Vision-Pipeline (YOLO11 + Tracking + Tiefe) mit Follow-Modus
 - [ ] Sonar-Hindernisvermeidung fertigstellen (Hardware-Verifikation)
 - [ ] Fußsensoren (Bodenkontakt-Erkennung)
-- [ ] Kalibrierungsrig-STL veröffentlichen
+- [x] Kalibrierungsrig-STL veröffentlichen
 - [ ] PCA9685-Treiber fuer das originale Freenove-Board
 
 ## Lizenz & Hinweis
