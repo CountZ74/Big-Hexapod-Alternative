@@ -6,11 +6,17 @@ wandert am Hall-Sensor vorbei. Der Sensor gibt eine analoge Spannung aus, die
 der Maestro auf einem als *Input* konfigurierten Kanal als 10-Bit-Wert
 (0..1023 für 0..5 V) liefert.
 
-Warum das mehr ist als ein Taster: Der Hall-Sensor misst nicht nur "Kontakt
-ja/nein", sondern *wie weit* die Feder eingedrückt ist — also näherungsweise
-die Auflagekraft. Der normierte Pegel (0 = frei, 1 = voll eingefedert) ist
-deshalb das eigentlich interessante Signal; der Kontakt-Bool ist nur die
-geschwellte Variante davon.
+Das ist ein **Wegaufnehmer, kein Taster**. Die interessante Größe ist der
+normierte Federweg zwischen den beiden mechanischen Endpunkten: 0.0 = Stange
+ausgefahren, keine Last; 1.0 = Stange am Anschlag. Weil die Feder linear
+arbeitet, ist dieser Weg ein Maß für die Auflagekraft. Ein Fuß, der im
+Schwung gerade den Boden touchiert, liegt weit unten im Bereich; ein Bein,
+das im ruhigen Stand ein Sechstel des Roboters trägt, deutlich höher; ein
+Bein, das im Gait die Last abfängt, noch höher.
+
+Deshalb liefert dieses Modul absichtlich **kein** "hat Boden"-Flag. Wo eine
+Schwelle nötig ist, kennt der Aufrufer den Kontext (Schwungphase, Stand,
+Klettern) und setzt sie dort — hier gäbe es nur eine falsche.
 
 Dieses Modul liest ausschließlich — es sendet nie ein Servo-Target. Damit ist
 es auf echter Hardware jederzeit gefahrlos benutzbar.
@@ -48,9 +54,10 @@ class FootSensorReading:
     raw: float
     """Rohwert 0..1023 (Maestro-Analogeingang)."""
     level: float | None
-    """Normiert: 0.0 = frei, 1.0 = voll eingefedert. None = unkalibriert."""
-    contact: bool | None
-    """Bodenkontakt mit Hysterese. None = unkalibriert."""
+    """Normierter Federweg: 0.0 = unbelastet, 1.0 = am Anschlag.
+
+    None, solange der Sensor nicht kalibriert ist.
+    """
 
     @property
     def volts(self) -> float:
@@ -61,14 +68,18 @@ class FootSensorReading:
     def calibrated(self) -> bool:
         return self.level is not None
 
+    @property
+    def percent(self) -> float | None:
+        """Federweg in Prozent — dieselbe Zahl, nur lesbarer."""
+        return None if self.level is None else self.level * 100.0
+
 
 class FootSensorArray:
     """Liest alle konfigurierten Fußsensoren über einen Analogeingang-Treiber.
 
-    Der Kontaktzustand wird pro Bein gehalten, weil die Hysterese vom
-    vorherigen Zustand abhängt: Einschalten bei `threshold`, Ausschalten
-    erst unter `threshold - hysteresis`. Ohne diese Erinnerung würde ein
-    Fuß, der genau auf der Schwelle steht, im Takt der Abtastung flattern.
+    Zustandslos: Jeder Aufruf misst frisch und wertet nur diese Messung aus.
+    Es gibt nichts zu erinnern, weil es keinen geschalteten Zustand gibt —
+    nur einen fortlaufenden Messwert.
 
     Args:
         driver: Alles, was `read_analog(channel)` kann (Maestro, Simulator).
@@ -81,9 +92,6 @@ class FootSensorArray:
         self._sensors: dict[str, FootSensorConfig] = {
             s.leg: s for s in config.active
         }
-        # Startannahme: kein Bein hat Kontakt. Der erste Messwert korrigiert
-        # das sofort, weil die Einschaltschwelle zustandsunabhängig ist.
-        self._contact: dict[str, bool] = dict.fromkeys(self._sensors, False)
         logger.info(
             "FootSensorArray: %d aktive Sensoren (%s)",
             len(self._sensors),
@@ -130,80 +138,74 @@ class FootSensorArray:
     # ---- Ausgewertete Messwerte ----
 
     def read(self, leg: str, *, samples: int | None = None) -> FootSensorReading:
-        """Ein Bein messen und auswerten (aktualisiert den Hysterese-Zustand)."""
+        """Ein Bein messen und auf den normierten Federweg umrechnen."""
         sensor = self.sensor_config(leg)
         raw = self.read_raw(leg, samples=samples)
         return self._evaluate(sensor, raw)
 
     def read_all(self, *, samples: int | None = None) -> dict[str, FootSensorReading]:
         """Alle aktiven Sensoren messen."""
-        return {
-            leg: self.read(leg, samples=samples)
-            for leg in self._sensors
-        }
+        return {leg: self.read(leg, samples=samples) for leg in self._sensors}
 
-    def contacts(self, *, samples: int | None = None) -> dict[str, bool]:
-        """Nur die Kontaktzustände — unkalibrierte Beine fallen raus."""
+    def levels(self, *, samples: int | None = None) -> dict[str, float]:
+        """Nur die Federwege — unkalibrierte Beine fallen raus."""
         return {
-            leg: reading.contact
+            leg: reading.level
             for leg, reading in self.read_all(samples=samples).items()
-            if reading.contact is not None
+            if reading.level is not None
         }
 
-    def reset_state(self, legs: Iterable[str] | None = None) -> None:
-        """Hysterese-Zustand zurücksetzen (z.B. vor einer neuen Messreihe)."""
-        for leg in self._sensors if legs is None else legs:
-            if leg in self._contact:
-                self._contact[leg] = False
+    def load_share(self, *, samples: int | None = None) -> dict[str, float]:
+        """Lastverteilung: Anteil jedes Beins an der Summe aller Federwege.
+
+        Nützlich im Stand: Sechs gleichmäßig belastete Beine liefern je ~1/6.
+        Ein Bein, das deutlich darunter liegt, trägt nicht mit (Boden uneben,
+        z_trim daneben). Bewusst relativ — dafür braucht es keine Umrechnung
+        in Newton und keine Federkonstante.
+
+        Leerer Dict, wenn kein Bein Last hat (alle in der Luft).
+        """
+        levels = self.levels(samples=samples)
+        total = sum(levels.values())
+        if total <= 0.0:
+            return {}
+        return {leg: value / total for leg, value in levels.items()}
 
     # ---- Interna ----
 
     def _evaluate(self, sensor: FootSensorConfig, raw: float) -> FootSensorReading:
         calib = sensor.calibration
-        if calib is None:
-            return FootSensorReading(
-                leg=sensor.leg, channel=sensor.channel, raw=raw, level=None, contact=None
-            )
-
-        level = calib.level(raw)
-        was_in_contact = self._contact.get(sensor.leg, False)
-        if was_in_contact:
-            # Halten, bis der Pegel klar unter die Schwelle fällt.
-            now = level >= (calib.threshold - calib.hysteresis)
-        else:
-            now = level >= calib.threshold
-        self._contact[sensor.leg] = now
-
+        level = None if calib is None else calib.level(raw)
         return FootSensorReading(
-            leg=sensor.leg, channel=sensor.channel, raw=raw, level=level, contact=now
+            leg=sensor.leg, channel=sensor.channel, raw=raw, level=level
         )
 
 
 def endpoints_from_samples(
-    released: Iterable[float],
-    contact: Iterable[float],
+    unloaded: Iterable[float],
+    full: Iterable[float],
 ) -> tuple[float, float]:
-    """Rohwert-Messreihen → (raw_released, raw_contact) als Median.
+    """Rohwert-Messreihen → (raw_unloaded, raw_full) als Median.
 
     Bewusst getrennt von der Pydantic-Klasse: Das CLI-Tool bildet damit
     die Endpunkte, zeigt sie dem Nutzer und lässt sie erst danach vom
-    Modell validieren (Spanne groß genug?).
+    Modell validieren (Messbereich groß genug?).
     """
-    released_values = list(released)
-    contact_values = list(contact)
-    if not released_values or not contact_values:
+    unloaded_values = list(unloaded)
+    full_values = list(full)
+    if not unloaded_values or not full_values:
         raise ValueError("Beide Messreihen brauchen mindestens einen Wert.")
-    return statistics.median(released_values), statistics.median(contact_values)
+    return statistics.median(unloaded_values), statistics.median(full_values)
 
 
 def describe(readings: Mapping[str, FootSensorReading]) -> str:
-    """Einzeiler für Logs: 'front_left 0.62 KONTAKT | mid_left 0.03 frei'."""
+    """Einzeiler für Logs: 'front_left 62% | mid_left roh=511 (unkalibriert)'."""
     parts: list[str] = []
     for leg, r in readings.items():
-        if r.level is None:
+        if r.percent is None:
             parts.append(f"{leg} roh={r.raw:.0f} (unkalibriert)")
         else:
-            parts.append(f"{leg} {r.level:.2f} {'KONTAKT' if r.contact else 'frei'}")
+            parts.append(f"{leg} {r.percent:.0f}%")
     return " | ".join(parts)
 
 

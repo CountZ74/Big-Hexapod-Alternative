@@ -16,43 +16,51 @@ from hexapod.config.model import (
     RobotConfig,
 )
 
+# Mechanischer Vollweg: unbelastet 400, Anschlag 700.
+VOLLWEG = {"raw_unloaded": 400.0, "raw_full": 700.0}
+
+
 # ---------------------------------------------------------------------
-# Kalibrierung
+# Messbereich
 # ---------------------------------------------------------------------
 
 
-def test_pegel_normiert_zwischen_endpunkten() -> None:
-    calib = FootSensorCalibration(raw_released=400.0, raw_contact=700.0)
+def test_federweg_normiert_zwischen_endpunkten() -> None:
+    calib = FootSensorCalibration(**VOLLWEG)
     assert calib.level(400.0) == pytest.approx(0.0)
     assert calib.level(550.0) == pytest.approx(0.5)
     assert calib.level(700.0) == pytest.approx(1.0)
 
 
-def test_pegel_wird_hart_begrenzt() -> None:
-    calib = FootSensorCalibration(raw_released=400.0, raw_contact=700.0)
+def test_federweg_wird_hart_begrenzt() -> None:
+    calib = FootSensorCalibration(**VOLLWEG)
     assert calib.level(100.0) == 0.0
     assert calib.level(1023.0) == 1.0
 
 
 def test_fallende_kennlinie_funktioniert_genauso() -> None:
-    """Magnet andersherum gepolt: Rohwert sinkt beim Aufsetzen."""
-    calib = FootSensorCalibration(raw_released=700.0, raw_contact=400.0)
+    """Magnet andersherum gepolt: Rohwert sinkt beim Eindrücken."""
+    calib = FootSensorCalibration(raw_unloaded=700.0, raw_full=400.0)
     assert calib.level(700.0) == pytest.approx(0.0)
     assert calib.level(550.0) == pytest.approx(0.5)
     assert calib.level(400.0) == pytest.approx(1.0)
     assert calib.span == pytest.approx(-300.0)
 
 
-def test_zu_kleine_spanne_wird_abgelehnt() -> None:
-    with pytest.raises(ValidationError, match="Spanne"):
-        FootSensorCalibration(raw_released=500.0, raw_contact=505.0)
+def test_aufloesung_wird_ausgewiesen() -> None:
+    calib = FootSensorCalibration(**VOLLWEG)
+    assert calib.counts_per_percent == pytest.approx(3.0)
 
 
-def test_hysterese_muss_kleiner_als_schwelle_sein() -> None:
-    with pytest.raises(ValidationError, match="hysteresis"):
-        FootSensorCalibration(
-            raw_released=400.0, raw_contact=700.0, threshold=0.2, hysteresis=0.3
-        )
+def test_zu_kleiner_messbereich_wird_abgelehnt() -> None:
+    with pytest.raises(ValidationError, match="Messbereich"):
+        FootSensorCalibration(raw_unloaded=500.0, raw_full=505.0)
+
+
+def test_kalibrierung_kennt_keine_schwelle() -> None:
+    """Die Entscheidung 'hat Boden' gehoert nicht in die Kalibrierung."""
+    felder = set(FootSensorCalibration.model_fields)
+    assert felder == {"raw_unloaded", "raw_full"}
 
 
 # ---------------------------------------------------------------------
@@ -130,11 +138,7 @@ def test_freier_kanal_ist_erlaubt(minimal_config_dict: dict[str, Any]) -> None:
     frei = next(ch for ch in range(12) if ch not in belegt)
     minimal_config_dict["foot_sensors"] = {
         "sensors": [
-            {
-                "leg": "front_right",
-                "channel": frei,
-                "calibration": {"raw_released": 400.0, "raw_contact": 700.0},
-            }
+            {"leg": "front_right", "channel": frei, "calibration": dict(VOLLWEG)}
         ]
     }
     config = RobotConfig.model_validate(minimal_config_dict)
@@ -210,14 +214,14 @@ def test_kalibrierung_speichern_laesst_rest_unangetastet(
     path = tmp_path / "robot.yaml"
     path.write_text(yaml.dump(minimal_config_dict, sort_keys=False), encoding="utf-8")
 
-    calib = FootSensorCalibration(raw_released=412.0, raw_contact=688.0)
+    calib = FootSensorCalibration(raw_unloaded=412.0, raw_full=688.0)
     save_foot_sensor_calibrations(path, {"front_right": calib})
 
     reloaded = load_robot_config(path)
     sensor = reloaded.foot_sensors.get("front_right")
     assert sensor.calibration is not None
-    assert sensor.calibration.raw_released == pytest.approx(412.0)
-    assert sensor.calibration.raw_contact == pytest.approx(688.0)
+    assert sensor.calibration.raw_unloaded == pytest.approx(412.0)
+    assert sensor.calibration.raw_full == pytest.approx(688.0)
     # Der Rest der Datei ist unveraendert geblieben.
     assert reloaded.body.legs[0].mount_x == minimal_config_dict["body"]["legs"][0]["mount_x"]
 
@@ -229,6 +233,6 @@ def test_speichern_fuer_unbekanntes_bein_wirft(
     path = tmp_path / "robot.yaml"
     path.write_text(yaml.dump(minimal_config_dict, sort_keys=False), encoding="utf-8")
 
-    calib = FootSensorCalibration(raw_released=400.0, raw_contact=700.0)
+    calib = FootSensorCalibration(**VOLLWEG)
     with pytest.raises(KeyError, match="mid_left"):
         save_foot_sensor_calibrations(path, {"mid_left": calib})

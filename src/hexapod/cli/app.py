@@ -160,7 +160,7 @@ def foot_monitor_cmd(
     ),
     rate_hz: float = typer.Option(8.0, "--rate", help="Aktualisierungen pro Sekunde"),
 ) -> None:
-    """Live-Anzeige der Fußsensoren (rein lesend, bewegt nichts)."""
+    """Live-Anzeige der Fußsensoren mit Min/Max-Gedächtnis (rein lesend)."""
     from .foot import run_foot_monitor
     run_foot_monitor(config, simulator=simulator, rate_hz=rate_hz)
 
@@ -169,27 +169,15 @@ def foot_monitor_cmd(
 def foot_calibrate_cmd(
     config: Path = _CONFIG_OPT,
     leg: str | None = typer.Option(
-        None, "--leg", "-l", help="Nur dieses Bein kalibrieren (Default: alle)"
+        None, "--leg", "-l", help="Nur dieses Bein messen (Default: alle)"
     ),
     simulator: bool = typer.Option(
         False, "--simulator", "-s", help="Simulator statt echtem Maestro nutzen"
     ),
-    threshold: float = typer.Option(
-        0.40, "--threshold", help="Schaltschwelle als Anteil der Spanne"
-    ),
-    hysteresis: float = typer.Option(
-        0.15, "--hysteresis", help="Rückschaltabstand unter der Schwelle"
-    ),
 ) -> None:
-    """Fußsensoren kalibrieren (rein lesend, bewegt keinen Servo)."""
+    """Messbereich der Fußsensoren aufnehmen (rein lesend, bewegt keinen Servo)."""
     from .foot import run_foot_calibration
-    run_foot_calibration(
-        config,
-        simulator=simulator,
-        only_leg=leg,
-        threshold=threshold,
-        hysteresis=hysteresis,
-    )
+    run_foot_calibration(config, simulator=simulator, only_leg=leg)
 
 
 @app.command("status")

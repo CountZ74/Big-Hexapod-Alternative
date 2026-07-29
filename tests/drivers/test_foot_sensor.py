@@ -1,4 +1,4 @@
-"""Tests für den Fußsensor-Treiber (Auswertung, Hysterese, Maestro-Protokoll)."""
+"""Tests für den Fußsensor-Treiber (Federweg-Auswertung, Maestro-Protokoll)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from hexapod.drivers.simulator import SimulatorDriver
 
 from .fake_serial import FakeSerial
 
-CALIB = {"raw_released": 400.0, "raw_contact": 700.0, "threshold": 0.4, "hysteresis": 0.15}
+# Vollweg: unbelastet 400, Anschlag 700 -> 300 Zähler Messbereich.
+CALIB = {"raw_unloaded": 400.0, "raw_full": 700.0}
 
 
 def _config(**overrides: object) -> FootSensorsConfig:
@@ -79,7 +80,7 @@ def test_ohne_kalibrierung_nur_rohwert() -> None:
     reading = sensors.read("front_left")
     assert reading.raw == pytest.approx(500.0)
     assert reading.level is None
-    assert reading.contact is None
+    assert reading.percent is None
     assert not reading.calibrated
 
 
@@ -89,46 +90,73 @@ def test_volt_umrechnung() -> None:
 
 
 # ---------------------------------------------------------------------
-# Schwelle und Hysterese
+# Federweg als kontinuierliche Größe
 # ---------------------------------------------------------------------
 
 
-def test_kein_kontakt_unterhalb_der_schwelle() -> None:
-    # Pegel 0.2 < threshold 0.4
-    sensors, _ = _array(460)
-    assert sensors.read("front_left").contact is False
+def test_federweg_ueber_den_ganzen_bereich() -> None:
+    """Der Sensor misst einen Bereich, keine zwei Zustände."""
+    sensors, driver = _array(400)
+    for raw, erwartet in [
+        (400, 0.00),   # Feder entspannt
+        (430, 0.10),   # gerade angetippt
+        (475, 0.25),
+        (550, 0.50),   # halbe Federkraft
+        (625, 0.75),
+        (700, 1.00),   # mechanischer Anschlag
+    ]:
+        driver.set_analog(0, raw)
+        assert sensors.read("front_left").level == pytest.approx(erwartet)
 
 
-def test_kontakt_ab_der_schwelle() -> None:
-    # Pegel 0.4 == threshold
-    sensors, _ = _array(520)
-    assert sensors.read("front_left").contact is True
+def test_federweg_ist_monoton() -> None:
+    """Mehr Last darf nie einen kleineren Pegel ergeben."""
+    sensors, driver = _array(400)
+    vorher = -1.0
+    for raw in range(400, 701, 10):
+        driver.set_analog(0, raw)
+        level = sensors.read("front_left").level
+        assert level is not None
+        assert level >= vorher
+        vorher = level
 
 
-def test_hysterese_haelt_den_kontakt() -> None:
-    """Einmal aufgesetzt, bleibt der Kontakt bis unter threshold - hysteresis."""
-    sensors, driver = _array(700)  # Pegel 1.0 -> Kontakt
-    assert sensors.read("front_left").contact is True
-
-    driver.set_analog(0, 490)  # Pegel 0.30: unter 0.4, aber über 0.25
-    assert sensors.read("front_left").contact is True
-
-    driver.set_analog(0, 460)  # Pegel 0.20: unter 0.25 -> löst aus
-    assert sensors.read("front_left").contact is False
-
-    driver.set_analog(0, 490)  # wieder 0.30, aber jetzt aus dem Ruhezustand
-    assert sensors.read("front_left").contact is False
+def test_prozent_ist_derselbe_wert_lesbarer() -> None:
+    sensors, _ = _array(550)
+    assert sensors.read("front_left").percent == pytest.approx(50.0)
 
 
-def test_reset_state_setzt_kontakt_zurueck() -> None:
+def test_ausserhalb_des_vollwegs_wird_begrenzt() -> None:
+    """Über den Anschlag hinaus geht es mechanisch nicht."""
+    sensors, driver = _array(200)
+    assert sensors.read("front_left").level == 0.0
+    driver.set_analog(0, 1023)
+    assert sensors.read("front_left").level == 1.0
+
+
+def test_fallende_kennlinie_funktioniert_genauso() -> None:
+    """Magnet andersherum gepolt: Rohwert sinkt beim Eindrücken."""
+    sensors, driver = _array(700, calibration={"raw_unloaded": 700.0, "raw_full": 400.0})
+    assert sensors.read("front_left").level == pytest.approx(0.0)
+    driver.set_analog(0, 550)
+    assert sensors.read("front_left").level == pytest.approx(0.5)
+    driver.set_analog(0, 400)
+    assert sensors.read("front_left").level == pytest.approx(1.0)
+
+
+def test_auswertung_ist_zustandslos() -> None:
+    """Derselbe Rohwert liefert denselben Pegel, egal was vorher war."""
     sensors, driver = _array(700)
-    assert sensors.read("front_left").contact is True
-    sensors.reset_state()
-    driver.set_analog(0, 490)  # 0.30 — ohne Vorgeschichte kein Kontakt
-    assert sensors.read("front_left").contact is False
+    assert sensors.read("front_left").level == pytest.approx(1.0)
+    driver.set_analog(0, 475)
+    erst = sensors.read("front_left").level
+    driver.set_analog(0, 400)
+    sensors.read("front_left")
+    driver.set_analog(0, 475)
+    assert sensors.read("front_left").level == erst
 
 
-def test_contacts_liefert_nur_kalibrierte() -> None:
+def test_levels_liefert_nur_kalibrierte() -> None:
     driver = SimulatorDriver(num_channels=24)
     driver.set_analog(0, 700)
     driver.set_analog(1, 700)
@@ -142,7 +170,48 @@ def test_contacts_liefert_nur_kalibrierte() -> None:
         }
     )
     sensors = FootSensorArray(driver, config)
-    assert sensors.contacts() == {"front_left": True}
+    assert sensors.levels() == {"front_left": pytest.approx(1.0)}
+
+
+# ---------------------------------------------------------------------
+# Lastverteilung
+# ---------------------------------------------------------------------
+
+
+def _zwei_beine(raw_a: int, raw_b: int) -> FootSensorArray:
+    driver = SimulatorDriver(num_channels=24)
+    driver.set_analog(0, raw_a)
+    driver.set_analog(1, raw_b)
+    config = FootSensorsConfig.model_validate(
+        {
+            "samples": 1,
+            "sensors": [
+                {"leg": "front_left", "channel": 0, "calibration": dict(CALIB)},
+                {"leg": "mid_left", "channel": 1, "calibration": dict(CALIB)},
+            ],
+        }
+    )
+    return FootSensorArray(driver, config)
+
+
+def test_gleiche_last_haelfte_haelfte() -> None:
+    sensors = _zwei_beine(550, 550)
+    anteile = sensors.load_share()
+    assert anteile["front_left"] == pytest.approx(0.5)
+    assert anteile["mid_left"] == pytest.approx(0.5)
+
+
+def test_ungleiche_last_wird_sichtbar() -> None:
+    """Ein Bein am Anschlag, eines halb: 2/3 zu 1/3."""
+    sensors = _zwei_beine(700, 550)
+    anteile = sensors.load_share()
+    assert anteile["front_left"] == pytest.approx(2 / 3)
+    assert anteile["mid_left"] == pytest.approx(1 / 3)
+
+
+def test_alle_beine_in_der_luft_ergibt_keine_verteilung() -> None:
+    sensors = _zwei_beine(400, 400)
+    assert sensors.load_share() == {}
 
 
 # ---------------------------------------------------------------------
@@ -151,9 +220,9 @@ def test_contacts_liefert_nur_kalibrierte() -> None:
 
 
 def test_endpunkte_aus_messreihen() -> None:
-    released, contact = endpoints_from_samples([400, 402, 398], [700, 705, 695])
-    assert released == pytest.approx(400.0)
-    assert contact == pytest.approx(700.0)
+    unloaded, full = endpoints_from_samples([400, 402, 398], [700, 705, 695])
+    assert unloaded == pytest.approx(400.0)
+    assert full == pytest.approx(700.0)
 
 
 def test_endpunkte_brauchen_werte() -> None:
@@ -161,11 +230,16 @@ def test_endpunkte_brauchen_werte() -> None:
         endpoints_from_samples([], [700])
 
 
-def test_describe_ist_lesbar() -> None:
-    sensors, _ = _array(700)
+def test_describe_zeigt_prozent() -> None:
+    sensors, _ = _array(550)
     text = describe(sensors.read_all())
     assert "front_left" in text
-    assert "KONTAKT" in text
+    assert "50%" in text
+
+
+def test_describe_markiert_unkalibrierte() -> None:
+    sensors, _ = _array(550, calibration=None)
+    assert "unkalibriert" in describe(sensors.read_all())
 
 
 # ---------------------------------------------------------------------

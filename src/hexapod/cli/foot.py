@@ -1,14 +1,16 @@
 """Kalibrierung und Live-Anzeige der Fußsensoren.
 
-Die Fußsensoren (Hall-Sensor + federbelastete Schubstange) liefern einen
-Rohwert 0..1023 vom Analogeingang des Maestro. Damit daraus ein brauchbares
-"Fuß hat Boden"-Signal wird, brauchen wir pro Bein zwei Referenzpunkte:
+Der Fußsensor (Hall-Sensor + federbelastete Schubstange) ist ein Wegaufnehmer:
+Er misst, wie weit die Stange gegen die Feder eingedrückt ist — also
+näherungsweise die Auflagekraft. Kalibriert wird deshalb nur der
+**mechanische Vollweg**, die beiden festen Endpunkte:
 
-  1. Rohwert, wenn das Bein frei in der Luft hängt   → raw_released
-  2. Rohwert, wenn der Fuß voll aufgesetzt ist       → raw_contact
+  1. Schubstange ganz ausgefahren (Bein frei in der Luft)  → raw_unloaded
+  2. Schubstange ganz eingedrückt (mechanischer Anschlag)  → raw_full
 
-Dazwischen wird linear normiert. Ob der Wert beim Aufsetzen steigt oder
-fällt, ist egal — das ergibt sich aus den beiden Messungen.
+Alles, was der Roboter im Betrieb macht — antippen, stehen, laufen, klettern —
+liegt irgendwo dazwischen. Wo genau, findet man mit `hexapod foot-monitor`
+heraus: Die Anzeige merkt sich den kleinsten und größten gesehenen Wert.
 
 SICHERHEIT: Dieses Werkzeug bewegt KEINEN Servo. Es öffnet den Maestro
 bewusst ohne Speed-/Acceleration-Initialisierung und sendet ausschließlich
@@ -39,21 +41,20 @@ from hexapod.drivers.simulator import SimulatorDriver
 
 console = Console()
 
-# Messreihe pro Referenzpunkt: 40 Werte in ~1,2 s. Genug, um Zittern und
-# einzelne ADC-Ausreißer über den Median wegzumitteln, kurz genug, dass man
-# den Fuß problemlos so lange still hält.
+# Messreihe pro Endpunkt: 40 Werte in ~1,2 s. Genug, um Zittern und einzelne
+# ADC-Ausreißer über den Median wegzumitteln, kurz genug, dass man die Stange
+# problemlos so lange in Position hält.
 CALIB_SAMPLES = 40
 CALIB_INTERVAL = 0.03
 
 BAR_WIDTH = 24
 
+ReadOnlyDriver = MaestroDriver | SimulatorDriver
+
 
 # ---------------------------------------------------------------------
 # Treiber-Aufbau — bewusst OHNE Hexapod-Klasse
 # ---------------------------------------------------------------------
-
-
-ReadOnlyDriver = MaestroDriver | SimulatorDriver
 
 
 def _open_driver(config: RobotConfig, *, simulator: bool) -> ReadOnlyDriver:
@@ -97,6 +98,14 @@ def _load(config_path: Path) -> RobotConfig:
     return config
 
 
+def _hinweis() -> None:
+    console.print(
+        "[dim]Es wird ausschließlich gelesen — kein Servo bewegt sich.\n"
+        "Läuft der Webserver (hexapod-web), belegt er die serielle Schnittstelle:\n"
+        "  sudo systemctl stop hexapod-web[/dim]\n"
+    )
+
+
 # ---------------------------------------------------------------------
 # Anzeige-Bausteine
 # ---------------------------------------------------------------------
@@ -107,25 +116,54 @@ def _bar(fraction: float, width: int = BAR_WIDTH) -> str:
     return "█" * filled + "·" * (width - filled)
 
 
-def _live_table(sensors: FootSensorArray, *, title: str) -> Table:
-    table = Table(title=title)
+def _spread(values: list[float]) -> str:
+    lo, hi = min(values), max(values)
+    return f"min {lo:.0f} / max {hi:.0f} (Streuung {hi - lo:.0f})"
+
+
+class _PeakHold:
+    """Merkt sich den kleinsten und größten Rohwert je Bein.
+
+    Genau dafür ist der Monitor da: Der mechanische Vollweg steht nach der
+    Kalibrierung fest, aber wo *im* Bereich Antippen, Stand und Gait liegen,
+    weiß man erst, wenn man es gesehen hat.
+    """
+
+    def __init__(self) -> None:
+        self._min: dict[str, float] = {}
+        self._max: dict[str, float] = {}
+
+    def update(self, leg: str, raw: float) -> None:
+        self._min[leg] = min(self._min.get(leg, raw), raw)
+        self._max[leg] = max(self._max.get(leg, raw), raw)
+
+    def seen(self, leg: str) -> tuple[float, float] | None:
+        if leg not in self._min:
+            return None
+        return self._min[leg], self._max[leg]
+
+
+def _monitor_table(sensors: FootSensorArray, peaks: _PeakHold) -> Table:
+    table = Table(title="Fußsensoren — Federweg")
     table.add_column("Bein")
     table.add_column("Kanal", justify="right")
     table.add_column("Roh", justify="right")
     table.add_column("Volt", justify="right")
-    table.add_column("Pegel", justify="right")
+    table.add_column("Federweg", justify="right")
     table.add_column("")
-    table.add_column("Kontakt", justify="center")
+    table.add_column("bisher gesehen", justify="right")
 
     for leg, r in sensors.read_all().items():
-        if r.level is None:
-            level_txt, bar, contact = "—", _bar(r.raw / ANALOG_MAX), "[dim]unkal.[/dim]"
+        peaks.update(leg, r.raw)
+        seen = peaks.seen(leg)
+        seen_txt = f"{seen[0]:.0f} … {seen[1]:.0f}" if seen else "—"
+        if r.percent is None:
+            weg_txt, bar = "[dim]unkal.[/dim]", _bar(r.raw / ANALOG_MAX)
         else:
-            level_txt = f"{r.level:.2f}"
-            bar = _bar(r.level)
-            contact = "[green]BODEN[/green]" if r.contact else "[dim]frei[/dim]"
+            weg_txt = f"{r.percent:5.1f} %"
+            bar = _bar(r.level or 0.0)
         table.add_row(
-            leg, str(r.channel), f"{r.raw:.0f}", f"{r.volts:.2f}", level_txt, bar, contact
+            leg, str(r.channel), f"{r.raw:.0f}", f"{r.volts:.2f}", weg_txt, bar, seen_txt
         )
     return table
 
@@ -145,11 +183,6 @@ def _measure(driver: ReadOnlyDriver, channel: int, *, label: str) -> list[float]
     return values
 
 
-def _spread(values: list[float]) -> str:
-    lo, hi = min(values), max(values)
-    return f"min {lo:.0f} / max {hi:.0f} (Streuung {hi - lo:.0f})"
-
-
 # ---------------------------------------------------------------------
 # Befehl: foot-monitor
 # ---------------------------------------------------------------------
@@ -161,16 +194,18 @@ def run_foot_monitor(
     simulator: bool = False,
     rate_hz: float = 8.0,
 ) -> None:
-    """Live-Ansicht aller Fußsensoren, bis Strg-C."""
+    """Live-Ansicht aller Fußsensoren mit Min/Max-Gedächtnis, bis Strg-C."""
     config = _load(config_path)
     driver = _open_driver(config, simulator=simulator)
     sensors = FootSensorArray(driver, config.foot_sensors)
+    peaks = _PeakHold()
     period = 1.0 / max(0.5, rate_hz)
+    _hinweis()
     console.print("[dim]Strg-C beendet die Anzeige.[/dim]")
     try:
         with Live(console=console, refresh_per_second=12) as live:
             while True:
-                live.update(_live_table(sensors, title="Fußsensoren"))
+                live.update(_monitor_table(sensors, peaks))
                 time.sleep(period)
     except KeyboardInterrupt:
         console.print("\nBeendet.")
@@ -188,10 +223,8 @@ def run_foot_calibration(
     *,
     simulator: bool = False,
     only_leg: str | None = None,
-    threshold: float = 0.40,
-    hysteresis: float = 0.15,
 ) -> None:
-    """Interaktive Kalibrierung — pro Bein zwei Messungen, dann Live-Test."""
+    """Messbereich pro Bein aufnehmen: die beiden mechanischen Endpunkte."""
     config = _load(config_path)
 
     todo = [s for s in config.foot_sensors.active if only_leg in (None, s.leg)]
@@ -200,11 +233,12 @@ def run_foot_calibration(
         raise typer.Exit(code=1)
 
     console.print(
-        "\n[bold]Fußsensor-Kalibrierung[/bold]\n"
-        "[dim]Es wird ausschließlich gelesen — kein Servo bewegt sich.\n"
-        "Läuft der Webserver (hexapod-web), belegt er die serielle Schnittstelle:\n"
-        "  sudo systemctl stop hexapod-web[/dim]\n"
+        "\n[bold]Fußsensor-Messbereich aufnehmen[/bold]\n"
+        "[dim]Gemessen wird der mechanische Vollweg der Schubstange — nicht,\n"
+        "ab wann der Fuß 'Boden hat'. Diese Grenze hängt davon ab, was der\n"
+        "Roboter gerade tut, und wird später im Gait gezogen.[/dim]\n"
     )
+    _hinweis()
 
     driver = _open_driver(config, simulator=simulator)
     results: dict[str, FootSensorCalibration] = {}
@@ -214,7 +248,7 @@ def run_foot_calibration(
             console.rule(f"[bold]{sensor.leg}[/bold]  (Maestro-Kanal {sensor.channel})")
 
             answer = typer.prompt(
-                "[Enter] kalibrieren, [s] überspringen, [q] beenden",
+                "[Enter] messen, [s] überspringen, [q] beenden",
                 default="",
                 show_default=False,
             ).strip().lower()
@@ -223,13 +257,7 @@ def run_foot_calibration(
             if answer == "s":
                 continue
 
-            calib = _calibrate_one(
-                driver,
-                sensor.channel,
-                sensor.leg,
-                threshold=threshold,
-                hysteresis=hysteresis,
-            )
+            calib = _calibrate_one(driver, sensor.channel, sensor.leg)
             if calib is None:
                 continue
             results[sensor.leg] = calib
@@ -237,29 +265,33 @@ def run_foot_calibration(
             _live_check(driver, config, sensor.leg, calib)
 
         if not results:
-            console.print("\nNichts kalibriert, nichts gespeichert.")
+            console.print("\nNichts gemessen, nichts gespeichert.")
             return
 
         console.rule("Ergebnis")
         table = Table()
         table.add_column("Bein")
-        table.add_column("frei", justify="right")
-        table.add_column("Kontakt", justify="right")
-        table.add_column("Spanne", justify="right")
-        table.add_column("Schwelle", justify="right")
+        table.add_column("unbelastet", justify="right")
+        table.add_column("Anschlag", justify="right")
+        table.add_column("Messbereich", justify="right")
+        table.add_column("Auflösung", justify="right")
         for leg, calib in results.items():
             table.add_row(
                 leg,
-                f"{calib.raw_released:.0f}",
-                f"{calib.raw_contact:.0f}",
-                f"{calib.span:+.0f}",
-                f"{calib.threshold:.2f} (-{calib.hysteresis:.2f})",
+                f"{calib.raw_unloaded:.0f}",
+                f"{calib.raw_full:.0f}",
+                f"{calib.span:+.0f} Zähler",
+                f"{calib.counts_per_percent:.1f} / %",
             )
         console.print(table)
 
         if typer.confirm(f"In {config_path} speichern?", default=True):
             path = save_foot_sensor_calibrations(config_path, results)
             console.print(f"[green]Gespeichert nach {path}[/green]")
+            console.print(
+                "[dim]Nächster Schritt: 'hexapod foot-monitor' laufen lassen und "
+                "schauen, wo Antippen, Stand und Gait im Bereich landen.[/dim]"
+            )
         else:
             console.print("Nicht gespeichert.")
     finally:
@@ -270,35 +302,36 @@ def _calibrate_one(
     driver: ReadOnlyDriver,
     channel: int,
     leg: str,
-    *,
-    threshold: float,
-    hysteresis: float,
 ) -> FootSensorCalibration | None:
-    """Die beiden Referenzmessungen für ein Bein. None = verworfen."""
+    """Die beiden Endpunkt-Messungen für ein Bein. None = verworfen."""
     while True:
         console.print(
-            f"\n[bold]1/2 — frei:[/bold] {leg} anheben, sodass der Fuß nichts "
-            f"berührt und die Feder ganz ausgefahren ist."
+            f"\n[bold]1/2 — unbelastet:[/bold] {leg} anheben, sodass der Fuß nichts "
+            f"berührt und die Feder die Schubstange ganz ausfährt."
         )
         typer.prompt("Bereit? [Enter]", default="", show_default=False)
-        released = _measure(driver, channel, label="frei    ")
-        console.print(f"  Median [bold]{sorted(released)[len(released) // 2]:.0f}[/bold]"
-                      f"   {_spread(released)}")
+        unloaded = _measure(driver, channel, label="unbelastet")
+        console.print(
+            f"  Median [bold]{sorted(unloaded)[len(unloaded) // 2]:.0f}[/bold]"
+            f"   {_spread(unloaded)}"
+        )
 
         console.print(
-            f"\n[bold]2/2 — Kontakt:[/bold] Fuß von {leg} fest aufsetzen, bis die "
-            f"Feder spürbar eingedrückt ist — so fest wie im Stand."
+            f"\n[bold]2/2 — Anschlag:[/bold] Schubstange von {leg} von Hand ganz "
+            f"eindrücken, bis sie mechanisch nicht weiter geht."
         )
         typer.prompt("Bereit? [Enter]", default="", show_default=False)
-        contact = _measure(driver, channel, label="Kontakt ")
-        console.print(f"  Median [bold]{sorted(contact)[len(contact) // 2]:.0f}[/bold]"
-                      f"   {_spread(contact)}")
-
-        raw_released, raw_contact = endpoints_from_samples(released, contact)
-        span = raw_contact - raw_released
+        full = _measure(driver, channel, label="Anschlag  ")
         console.print(
-            f"\n  frei {raw_released:.0f} → Kontakt {raw_contact:.0f}  "
-            f"(Spanne {span:+.0f}, "
+            f"  Median [bold]{sorted(full)[len(full) // 2]:.0f}[/bold]"
+            f"   {_spread(full)}"
+        )
+
+        raw_unloaded, raw_full = endpoints_from_samples(unloaded, full)
+        span = raw_full - raw_unloaded
+        console.print(
+            f"\n  unbelastet {raw_unloaded:.0f} → Anschlag {raw_full:.0f}  "
+            f"(Messbereich {span:+.0f} Zähler, "
             f"{'steigend' if span > 0 else 'fallend'})"
         )
 
@@ -307,30 +340,27 @@ def _calibrate_one(
                 f"[red]Zu wenig Signal ({abs(span):.0f} < {MIN_CALIBRATION_SPAN:.0f} "
                 f"Zähler).[/red] Mögliche Ursachen: Magnet zu weit vom Hall-Sensor, "
                 f"Kanal {channel} noch nicht als 'Input' im Maestro konfiguriert, "
-                f"oder die Feder wurde nicht wirklich eingedrückt."
+                f"oder die Stange ist nicht bis zum Anschlag gekommen."
             )
             if typer.confirm("Nochmal versuchen?", default=True):
                 continue
             return None
 
-        # Rauschabschätzung: Wie sicher trennt die Schwelle die beiden Zustände?
-        noise = max(
-            max(released) - min(released),
-            max(contact) - min(contact),
+        # Rauschabschätzung: Wieviel vom Messbereich frisst das Rauschen?
+        noise = max(max(unloaded) - min(unloaded), max(full) - min(full))
+        noise_percent = noise / abs(span) * 100.0
+        console.print(
+            f"  Auflösung {abs(span) / 100.0:.1f} Zähler pro % Federweg, "
+            f"Rauschen ~{noise_percent:.1f} % des Bereichs"
         )
-        if noise > abs(span) * 0.5:
+        if noise_percent > 10.0:
             console.print(
-                f"[yellow]Achtung: Streuung ({noise:.0f}) ist groß gegenüber der "
-                f"Spanne ({abs(span):.0f}) — das Signal wird wackelig.[/yellow]"
+                "[yellow]Achtung: Das Rauschen frisst über 10 % des Messbereichs — "
+                "feine Lastunterschiede werden schwer zu unterscheiden sein.[/yellow]"
             )
 
         try:
-            return FootSensorCalibration(
-                raw_released=raw_released,
-                raw_contact=raw_contact,
-                threshold=threshold,
-                hysteresis=hysteresis,
-            )
+            return FootSensorCalibration(raw_unloaded=raw_unloaded, raw_full=raw_full)
         except ValueError as e:
             console.print(f"[red]Unbrauchbar: {e}[/red]")
             if typer.confirm("Nochmal versuchen?", default=True):
@@ -344,27 +374,29 @@ def _live_check(
     leg: str,
     calib: FootSensorCalibration,
 ) -> None:
-    """Direkt nach der Messung prüfen, ob die Schwelle im Alltag passt."""
+    """Direkt nach der Messung sehen, wie sich der Federweg anfühlt."""
     console.print(
-        "\n[bold]Test:[/bold] Fuß mehrfach auf- und absetzen — springt "
-        "'BODEN' sauber um? [dim](Strg-C beendet den Test)[/dim]"
+        "\n[bold]Test:[/bold] Fuß unterschiedlich stark belasten — leicht "
+        "antippen, dann fest aufdrücken. Der Federweg sollte sauber "
+        "mitlaufen. [dim](Strg-C beendet den Test)[/dim]"
     )
     # Eine Wegwerf-Konfiguration nur für diesen einen Sensor, damit die
     # Auswertung exakt dieselbe Code-Bahn nimmt wie später im Betrieb.
     patched = config.foot_sensors.model_copy(
         update={
             "sensors": [
-                s.model_copy(update={"calibration": calib}) if s.leg == leg else s
+                s.model_copy(update={"calibration": calib})
                 for s in config.foot_sensors.sensors
                 if s.leg == leg
             ]
         }
     )
     sensors = FootSensorArray(driver, patched)
+    peaks = _PeakHold()
     try:
         with Live(console=console, refresh_per_second=12) as live:
             while True:
-                live.update(_live_table(sensors, title=f"Test {leg}"))
+                live.update(_monitor_table(sensors, peaks))
                 time.sleep(0.08)
     except KeyboardInterrupt:
         console.print("")

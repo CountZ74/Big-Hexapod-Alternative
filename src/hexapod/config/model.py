@@ -187,71 +187,73 @@ MIN_CALIBRATION_SPAN = 15.0
 
 
 class FootSensorCalibration(StrictBase):
-    """Kalibrierung eines Fußsensors.
+    """Messbereich eines Fußsensors — der mechanische Vollweg der Schubstange.
 
-    Der Hall-Sensor misst das Feld eines Magneten an der federbelasteten
-    Schubstange: Beim Aufsetzen schiebt sich die Stange hoch, der Magnet
-    wandert und der Rohwert verschiebt sich. Ob er dabei steigt oder fällt,
-    hängt von Einbaulage und Polung ab — deshalb speichern wir einfach
-    beide Endpunkte und normieren dazwischen:
+    Der Hall-Sensor ist ein Wegaufnehmer, kein Taster: Er misst, *wie weit*
+    die federbelastete Schubstange eingedrückt ist. Weil die Feder linear
+    arbeitet, ist dieser Weg ein Maß für die Auflagekraft — und die ist beim
+    leichten Antippen im Schwung eine ganz andere als im Stand auf sechs
+    Beinen oder beim Abfangen im Gait.
 
-        pegel = (roh - raw_released) / (raw_contact - raw_released)
+    Kalibriert werden deshalb nur die beiden **mechanischen** Endpunkte:
 
-    Damit ist 0.0 = Bein frei in der Luft, 1.0 = sicherer Bodenkontakt,
-    und die Richtung ergibt sich automatisch aus den beiden Rohwerten.
+        raw_unloaded  Stange ganz ausgefahren (Feder entspannt, Bein frei)
+        raw_full      Stange ganz eingedrückt (mechanischer Anschlag)
+
+    Das ist ein fester physikalischer Bezug. Er ändert sich nicht, wenn der
+    Roboter mal steht und mal läuft, und jeder Betriebszustand liegt
+    irgendwo dazwischen:
+
+        pegel = (roh - raw_unloaded) / (raw_full - raw_unloaded)
+
+    0.0 = unbelastet, 1.0 = am Anschlag. Ob der Rohwert beim Eindrücken
+    steigt oder fällt, ergibt sich aus den beiden Werten — Einbaulage und
+    Magnetpolung sind damit egal.
+
+    Bewusst NICHT hier: eine Schwelle "hat Boden". Die hängt vom Kontext ab
+    und gehört dorthin, wo dieser Kontext bekannt ist (Gait, Kletterlogik),
+    nicht in die Sensor-Kalibrierung.
     """
 
-    raw_released: float = Field(
+    raw_unloaded: float = Field(
         ge=0.0,
         le=ANALOG_MAX,
-        description="Rohwert ohne Bodenkontakt (Bein hängt frei).",
+        description="Rohwert bei ganz ausgefahrener Schubstange (keine Last).",
     )
-    raw_contact: float = Field(
+    raw_full: float = Field(
         ge=0.0,
         le=ANALOG_MAX,
-        description="Rohwert bei sicherem Bodenkontakt (Feder eingedrückt).",
-    )
-    threshold: float = Field(
-        default=0.40,
-        gt=0.0,
-        le=1.0,
-        description="Ab diesem normierten Pegel gilt der Fuß als aufgesetzt.",
-    )
-    hysteresis: float = Field(
-        default=0.15,
-        ge=0.0,
-        lt=1.0,
-        description=(
-            "Rückschaltabstand. Kontakt wird erst wieder aufgehoben, wenn der "
-            "Pegel unter (threshold - hysteresis) fällt. Verhindert Flattern."
-        ),
+        description="Rohwert bei ganz eingedrückter Schubstange (Anschlag).",
     )
 
     @model_validator(mode="after")
     def _validate_span(self) -> FootSensorCalibration:
-        span = abs(self.raw_contact - self.raw_released)
+        span = abs(self.raw_full - self.raw_unloaded)
         if span < MIN_CALIBRATION_SPAN:
             raise ValueError(
-                f"Spanne zwischen raw_released ({self.raw_released}) und "
-                f"raw_contact ({self.raw_contact}) ist nur {span:.1f} Zähler — "
+                f"Messbereich zwischen raw_unloaded ({self.raw_unloaded}) und "
+                f"raw_full ({self.raw_full}) ist nur {span:.1f} Zähler — "
                 f"mindestens {MIN_CALIBRATION_SPAN} nötig. Sitzt der Magnet richtig?"
-            )
-        if self.hysteresis >= self.threshold:
-            raise ValueError(
-                f"hysteresis ({self.hysteresis}) muss kleiner als "
-                f"threshold ({self.threshold}) sein, sonst kann der Kontakt "
-                f"nie wieder abfallen."
             )
         return self
 
     @property
     def span(self) -> float:
-        """Vorzeichenbehaftete Spanne released → contact."""
-        return self.raw_contact - self.raw_released
+        """Vorzeichenbehaftete Spanne unbelastet → Anschlag."""
+        return self.raw_full - self.raw_unloaded
+
+    @property
+    def counts_per_percent(self) -> float:
+        """ADC-Zähler pro Prozent Federweg — die effektive Auflösung."""
+        return abs(self.span) / 100.0
 
     def level(self, raw: float) -> float:
-        """Rohwert → normierter Pegel, hart auf [0, 1] begrenzt."""
-        value = (raw - self.raw_released) / self.span
+        """Rohwert → normierter Federweg, hart auf [0, 1] begrenzt.
+
+        Über den Anschlag hinaus geht es mechanisch nicht, unter die
+        entspannte Feder auch nicht — Werte außerhalb sind Rauschen.
+        """
+        value = (raw - self.raw_unloaded) / self.span
         return min(1.0, max(0.0, value))
 
 
@@ -270,7 +272,7 @@ class FootSensorConfig(StrictBase):
     enabled: bool = Field(default=True)
     calibration: FootSensorCalibration | None = Field(
         default=None,
-        description="Fehlt sie, liefert der Sensor nur Rohwerte (kein Kontaktsignal).",
+        description="Fehlt sie, liefert der Sensor nur Rohwerte (keinen Pegel).",
     )
 
 

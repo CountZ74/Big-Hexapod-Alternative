@@ -83,10 +83,8 @@ def save_foot_sensor_calibrations(
 
     for leg, calib in calibrations.items():
         by_leg[leg]["calibration"] = {
-            "raw_released": round(calib.raw_released, 1),
-            "raw_contact": round(calib.raw_contact, 1),
-            "threshold": round(calib.threshold, 3),
-            "hysteresis": round(calib.hysteresis, 3),
+            "raw_unloaded": round(calib.raw_unloaded, 1),
+            "raw_full": round(calib.raw_full, 1),
         }
 
     target.write_text(
