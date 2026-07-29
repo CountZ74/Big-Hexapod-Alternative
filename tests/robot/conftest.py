@@ -21,5 +21,9 @@ def sim_hexapod() -> Hexapod:
         "num_channels": 24,
         "timeout": 1.0,
     }
+    # Die Kamera-Servos haengen am PCA9685 — im Test ebenfalls simuliert,
+    # sonst wuerde der Test echten I2C-Verkehr versuchen.
+    if data.get("camera_driver") is not None:
+        data["camera_driver"] = {**data["camera_driver"], "type": "simulator"}
     sim_config = config.model_validate(data)
     return Hexapod(sim_config)

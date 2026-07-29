@@ -1,10 +1,17 @@
 """Konfigurationsmodelle für den Hexapod."""
 
 from .model import (
+    ANALOG_MAX,
+    MAX_ANALOG_CHANNEL,
+    MIN_CALIBRATION_SPAN,
     BodyConfig,
     CameraAxis,
+    CameraDriverConfig,
     CameraServoConfig,
     DriverConfig,
+    FootSensorCalibration,
+    FootSensorConfig,
+    FootSensorsConfig,
     Joint,
     LegConfig,
     LegGeometry,
@@ -17,10 +24,17 @@ from .model import (
 )
 
 __all__ = [
+    "ANALOG_MAX",
+    "MAX_ANALOG_CHANNEL",
+    "MIN_CALIBRATION_SPAN",
     "BodyConfig",
     "CameraAxis",
+    "CameraDriverConfig",
     "CameraServoConfig",
     "DriverConfig",
+    "FootSensorCalibration",
+    "FootSensorConfig",
+    "FootSensorsConfig",
     "Joint",
     "LegConfig",
     "LegGeometry",

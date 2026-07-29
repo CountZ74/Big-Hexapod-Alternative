@@ -44,8 +44,10 @@ class TestHome:
         assert isinstance(driver, SimulatorDriver)
         sim_hexapod.home()
         snap = driver.snapshot()
-        for ch in range(18):
-            servo = next(s for s in sim_hexapod.config.servos if s.channel == ch)
+        # Kanalnummern aus der Konfig lesen statt anzunehmen, dass die
+        # Beinservos bei 0 beginnen — sie liegen jetzt auf 6..23.
+        for servo in sim_hexapod.config.main_bus_servos:
+            ch = servo.channel
             assert snap[ch] == pytest.approx(servo.center_us), f"Kanal {ch} falsch"
 
     def test_home_updates_leg_state(self, sim_hexapod: Hexapod) -> None:
@@ -160,13 +162,14 @@ class TestDirectServoControl:
         sim_hexapod.home()
         sim_hexapod.disable_all()
         snap = driver.snapshot()
-        for ch in range(18):
-            assert snap[ch] == 0.0, f"Kanal {ch} sollte 0 sein"
+        for servo in sim_hexapod.config.main_bus_servos:
+            assert snap[servo.channel] == 0.0, f"Kanal {servo.channel} sollte 0 sein"
 
 
 class TestCamera:
     def test_set_camera_pan_tilt(self, sim_hexapod: Hexapod) -> None:
-        driver = sim_hexapod.driver
+        # Kamera-Servos haengen am eigenen Bus (PCA9685), nicht am Maestro.
+        driver = sim_hexapod.camera_driver or sim_hexapod.driver
         assert isinstance(driver, SimulatorDriver)
         sim_hexapod.set_camera(pan_deg=0.0, tilt_deg=0.0)
         snap = driver.snapshot()
@@ -176,7 +179,7 @@ class TestCamera:
         assert snap[tilt.channel] == pytest.approx(tilt.center_us)
 
     def test_camera_pan_positive(self, sim_hexapod: Hexapod) -> None:
-        driver = sim_hexapod.driver
+        driver = sim_hexapod.camera_driver or sim_hexapod.driver
         assert isinstance(driver, SimulatorDriver)
         sim_hexapod.set_camera(pan_deg=45.0, tilt_deg=0.0)
         snap = driver.snapshot()

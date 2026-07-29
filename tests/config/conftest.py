@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from hexapod.config import (
@@ -94,3 +96,19 @@ def minimal_config(
         body=minimal_body,
         servos=minimal_servos,
     )
+
+
+@pytest.fixture
+def minimal_config_dict(minimal_config: RobotConfig) -> dict[str, Any]:
+    """Dieselbe Konfig als rohes dict, aber mit dem echten Kanal-Layout.
+
+    Die Beinservos liegen auf 6..23 (wie am umgebauten Roboter), damit die
+    Maestro-Kanäle 0..5 als Analogeingänge für die Fußsensoren frei sind.
+    Kamera-Servos sind bewusst nicht enthalten — die Tests, die sie brauchen,
+    hängen sie selbst an und bestimmen dabei den Bus.
+    """
+    data: dict[str, Any] = minimal_config.model_dump(mode="json")
+    data["servos"] = [s for s in data["servos"] if s["kind"] == "leg"]
+    for servo in data["servos"]:
+        servo["channel"] += 6
+    return data

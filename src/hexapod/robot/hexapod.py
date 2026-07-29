@@ -19,12 +19,15 @@ import numpy as np
 
 from hexapod.config import (
     CameraAxis,
+    CameraServoConfig,
     Joint,
     RobotConfig,
 )
 from hexapod.config.loader import load_robot_config
-from hexapod.drivers.base import ServoDriver
+from hexapod.drivers.base import AnalogInput, ServoDriver
+from hexapod.drivers.foot_sensor import FootSensorArray
 from hexapod.drivers.maestro import MaestroDriver
+from hexapod.drivers.pca9685 import Pca9685Driver
 from hexapod.drivers.simulator import SimulatorDriver
 from hexapod.kinematics import (
     BodyPose,
@@ -84,6 +87,7 @@ class Hexapod:
         self._config = config
         self._config_path: Path | None = None
         self._driver = self._create_driver()
+        self._camera_driver = self._create_camera_driver()
 
         # Bein-Geometrie (für alle Beine gleich)
         geo = config.body.leg_geometry
@@ -93,16 +97,36 @@ class Hexapod:
             tibia=geo.tibia_length,
         )
 
-        # Pro Servo ein Mapping erzeugen (channel → ServoMapping)
+        # Pro Servo ein Mapping erzeugen (channel → ServoMapping).
+        # Hängen die Kamera-Servos an einem eigenen Bus (PCA9685), bekommen
+        # sie eine eigene Tabelle: sonst würden sich Kanalnummern der beiden
+        # Busse gegenseitig überschreiben.
         self._mappings: dict[int, ServoMapping] = {}
+        self._camera_mappings: dict[int, ServoMapping] = {}
         for servo in config.servos:
-            self._mappings[servo.channel] = ServoMapping(
+            mapping = ServoMapping(
                 center_us=servo.center_us,
                 range_us=servo.range_us,
                 direction=servo.direction,
                 min_us=servo.min_us,
                 max_us=servo.max_us,
             )
+            if config.camera_on_own_bus and isinstance(servo, CameraServoConfig):
+                self._camera_mappings[servo.channel] = mapping
+            else:
+                self._mappings[servo.channel] = mapping
+
+        # Fußsensoren — nur wenn konfiguriert UND der Treiber analog lesen kann.
+        self._foot_sensors: FootSensorArray | None = None
+        if config.foot_sensors.active:
+            if isinstance(self._driver, AnalogInput):
+                self._foot_sensors = FootSensorArray(self._driver, config.foot_sensors)
+            else:
+                logger.warning(
+                    "Fußsensoren konfiguriert, aber Treiber %s kann keine "
+                    "Analogeingänge lesen — Sensoren bleiben aus.",
+                    type(self._driver).__name__,
+                )
 
         # Bein-Zustand tracken
         self._leg_states: dict[str, LegState] = {
@@ -209,7 +233,46 @@ class Hexapod:
         else:
             raise ValueError(f"Unbekannter Driver-Typ: {dc.type!r}")
 
+    def _create_camera_driver(self) -> ServoDriver | None:
+        """Zweiter Treiber nur für Pan/Tilt — None, wenn nicht konfiguriert.
+
+        Auf der Freenove-Platine hängen die Kamera-Servos an den beiden
+        PCA9685 (Anschluss 29/30), nicht am Maestro. Fehlt der Block in der
+        robot.yaml, bleibt alles beim Alten und die Kamera läuft über den
+        Haupttreiber.
+        """
+        cc = self._config.camera_driver
+        if cc is None:
+            return None
+        lim = self._config.servo_limits
+        if cc.type == "pca9685":
+            return Pca9685Driver(
+                bus=cc.bus,
+                num_channels=cc.num_channels,
+                freq_hz=cc.freq_hz,
+                min_pulse_us=lim.absolute_min_us,
+                max_pulse_us=lim.absolute_max_us,
+            )
+        elif cc.type == "simulator":
+            return SimulatorDriver(
+                num_channels=cc.num_channels,
+                min_pulse_us=lim.absolute_min_us,
+                max_pulse_us=lim.absolute_max_us,
+            )
+        else:
+            raise ValueError(f"Unbekannter Kamera-Driver-Typ: {cc.type!r}")
+
     # ---- Properties ----
+
+    @property
+    def foot_sensors(self) -> FootSensorArray | None:
+        """Fußsensoren, oder None wenn keine konfiguriert/lesbar sind."""
+        return self._foot_sensors
+
+    @property
+    def camera_driver(self) -> ServoDriver | None:
+        """Eigener Kamera-Treiber, oder None wenn Pan/Tilt am Haupttreiber hängt."""
+        return self._camera_driver
 
     @property
     def config(self) -> RobotConfig:
@@ -688,6 +751,11 @@ class Hexapod:
         self, pan_deg: float = 0.0, tilt_deg: float = 0.0, *, clip: bool = True
     ) -> None:
         """Setzt Pan/Tilt der Kamera in Grad."""
+        # Kamera-Servos können an einem eigenen Bus hängen (PCA9685).
+        driver = self._camera_driver if self._camera_driver is not None else self._driver
+        mappings = (
+            self._camera_mappings if self._camera_driver is not None else self._mappings
+        )
         positions: dict[int, float] = {}
         for axis, angle_deg in [
             (CameraAxis.PAN, pan_deg),
@@ -697,11 +765,11 @@ class Hexapod:
                 servo_cfg = self._config.get_camera_servo(axis)
             except KeyError:
                 continue
-            mapping = self._mappings[servo_cfg.channel]
+            mapping = mappings[servo_cfg.channel]
             us = mapping.angle_to_us(math.radians(angle_deg), clip=clip)
             positions[servo_cfg.channel] = us
         if positions:
-            self._driver.set_positions(positions)
+            driver.set_positions(positions)
 
     # ---- Convenience-Methoden ----
 
@@ -765,6 +833,11 @@ class Hexapod:
                 self.disable_all()
             except Exception as e:
                 logger.warning("Fehler beim Deaktivieren: %s", e)
+        if self._camera_driver is not None:
+            try:
+                self._camera_driver.close(disable=disable)
+            except Exception as e:
+                logger.warning("Fehler beim Schließen des Kamera-Treibers: %s", e)
         self._driver.close(disable=disable)
 
     def __enter__(self) -> Hexapod:

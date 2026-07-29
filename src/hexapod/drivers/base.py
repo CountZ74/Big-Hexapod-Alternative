@@ -16,6 +16,22 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from types import TracebackType
+from typing import Protocol, runtime_checkable
+
+
+@runtime_checkable
+class AnalogInput(Protocol):
+    """Alles, was einen Analogeingang lesen kann.
+
+    Bewusst ein Protocol und kein Teil von `ServoDriver`: Analogeingänge
+    sind eine Eigenschaft mancher Hardware (der Maestro kann es, ein
+    PCA9685 nicht). Wer Sensoren lesen will, verlangt dieses Protocol —
+    dann sagt schon der Typ, dass ein PCA9685 dafür nicht in Frage kommt.
+    """
+
+    def read_analog(self, channel: int) -> int:
+        """Rohwert eines als Eingang konfigurierten Kanals (0..1023)."""
+        ...
 
 
 class ServoDriver(ABC):

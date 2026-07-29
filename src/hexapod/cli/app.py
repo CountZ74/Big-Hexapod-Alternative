@@ -152,6 +152,46 @@ def stance_trim_cmd(
     run_stance_trim(config, simulator=simulator, do_power_up=power_up)
 
 
+@app.command("foot-monitor")
+def foot_monitor_cmd(
+    config: Path = _CONFIG_OPT,
+    simulator: bool = typer.Option(
+        False, "--simulator", "-s", help="Simulator statt echtem Maestro nutzen"
+    ),
+    rate_hz: float = typer.Option(8.0, "--rate", help="Aktualisierungen pro Sekunde"),
+) -> None:
+    """Live-Anzeige der Fußsensoren (rein lesend, bewegt nichts)."""
+    from .foot import run_foot_monitor
+    run_foot_monitor(config, simulator=simulator, rate_hz=rate_hz)
+
+
+@app.command("foot-calibrate")
+def foot_calibrate_cmd(
+    config: Path = _CONFIG_OPT,
+    leg: str | None = typer.Option(
+        None, "--leg", "-l", help="Nur dieses Bein kalibrieren (Default: alle)"
+    ),
+    simulator: bool = typer.Option(
+        False, "--simulator", "-s", help="Simulator statt echtem Maestro nutzen"
+    ),
+    threshold: float = typer.Option(
+        0.40, "--threshold", help="Schaltschwelle als Anteil der Spanne"
+    ),
+    hysteresis: float = typer.Option(
+        0.15, "--hysteresis", help="Rückschaltabstand unter der Schwelle"
+    ),
+) -> None:
+    """Fußsensoren kalibrieren (rein lesend, bewegt keinen Servo)."""
+    from .foot import run_foot_calibration
+    run_foot_calibration(
+        config,
+        simulator=simulator,
+        only_leg=leg,
+        threshold=threshold,
+        hysteresis=hysteresis,
+    )
+
+
 @app.command("status")
 def status() -> None:
     """Zeigt den aktuellen Roboter-Status."""

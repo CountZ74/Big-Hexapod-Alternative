@@ -28,6 +28,10 @@ CMD_GO_HOME = 0xA2          # 0xA2                        -> kein Response
 CMD_SET_SPEED = 0x87        # 0x87 <ch> <low> <high>      -> kein Response
 CMD_SET_ACCELERATION = 0x89 # 0x89 <ch> <low> <high>      -> kein Response
 
+# Nur die Kanaele 0..11 des Mini Maestro 24 haben einen ADC; 12..23 sind reine
+# Digital-Ein-/Ausgaenge und liefern als Eingang nur 0 oder 1023.
+MAX_ANALOG_CHANNEL = 11
+
 # Mikrosekunden <-> Quarter-Mikrosekunden
 # Maestro arbeitet intern in 0.25-us-Schritten.
 QUARTER_US_PER_US = 4
@@ -218,6 +222,38 @@ class MaestroDriver(ServoDriver):
             )
         quarter_us = self._decode_response_16bit(raw[0], raw[1])
         return quarter_us / QUARTER_US_PER_US
+
+    def read_analog(self, channel: int) -> int:
+        """Rohwert eines als *Input* konfigurierten Kanals (0..1023).
+
+        Der Maestro beantwortet "Get Position" je nach Kanal-Konfiguration
+        unterschiedlich: Bei einem Ausgang ist die Antwort die Soll-Pulsweite
+        in Viertel-Mikrosekunden, bei einem Eingang dagegen direkt der
+        ADC-Wert 0..1023 (entspricht 0..5 V). Deshalb liefert diese Methode
+        bewusst den ungeteilten 16-Bit-Rohwert, waehrend `get_position` durch
+        4 teilt.
+
+        Voraussetzung: Der Kanal wurde im Maestro Control Center einmalig auf
+        "Input" gestellt und die Einstellung im Geraet gespeichert. Ein noch
+        als Servo konfigurierter Kanal gibt stattdessen seine eigene
+        Soll-Pulsweite zurueck — der Wert sieht dann plausibel aus, ist aber
+        kein Sensorwert.
+        """
+        self._check_open()
+        self._check_channel(channel)
+        if channel > MAX_ANALOG_CHANNEL:
+            logger.warning(
+                "Kanal %d hat keinen ADC (nur 0..%d) — Wert ist rein digital (0/1023)",
+                channel,
+                MAX_ANALOG_CHANNEL,
+            )
+        raw = self._write_read(bytes([CMD_GET_POSITION, channel]), 2)
+        if len(raw) != 2:
+            raise MaestroError(
+                f"read_analog(ch={channel}): erwartete 2 Bytes, "
+                f"erhalten {len(raw)}"
+            )
+        return self._decode_response_16bit(raw[0], raw[1])
 
     def prime(self) -> int:
         """Bereite sanftes Anfahren vor (gegen ungebremsten ersten Zug).

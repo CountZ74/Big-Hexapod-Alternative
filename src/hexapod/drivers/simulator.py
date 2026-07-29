@@ -14,6 +14,8 @@ from .base import ServoDriver
 logger = logging.getLogger(__name__)
 
 DISABLED = 0.0
+# Groesster Rohwert eines 10-Bit-Analogeingangs (wie beim Maestro).
+ANALOG_MAX = 1023
 # Fallback-Grenzen — werden durch Konfig überschrieben
 _DEFAULT_MIN_US = 400.0
 _DEFAULT_MAX_US = 2600.0
@@ -36,6 +38,8 @@ class SimulatorDriver(ServoDriver):
         self._closed = False
         self._min_pulse_us = min_pulse_us
         self._max_pulse_us = max_pulse_us
+        # Vorgebbare Analogwerte, damit Sensor-Code ohne Hardware testbar ist.
+        self._analog: dict[int, int] = {}
 
     def _check_channel(self, channel: int) -> None:
         if not 0 <= channel < self._num_channels:
@@ -84,6 +88,19 @@ class SimulatorDriver(ServoDriver):
         self._check_open()
         self._check_channel(channel)
         return self._positions[channel]
+
+    def read_analog(self, channel: int) -> int:
+        """Rohwert eines simulierten Analogeingangs (Default 0)."""
+        self._check_open()
+        self._check_channel(channel)
+        return self._analog.get(channel, 0)
+
+    def set_analog(self, channel: int, value: int) -> None:
+        """Analogwert vorgeben — das Gegenstueck zu `read_analog` fuer Tests."""
+        self._check_channel(channel)
+        if not 0 <= value <= ANALOG_MAX:
+            raise ValueError(f"Analogwert {value} ausserhalb [0, {ANALOG_MAX}]")
+        self._analog[channel] = value
 
     def disable(self, channel: int) -> None:
         self._check_open()

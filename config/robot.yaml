@@ -8,6 +8,11 @@ driver:
   port: /dev/maestro_cmd
   num_channels: 24
   timeout: 1.0
+camera_driver:
+  type: pca9685
+  bus: 1
+  num_channels: 32
+  freq_hz: 50.0
 body:
   leg_geometry:
     coxa_length: 33.0
@@ -60,7 +65,7 @@ servos:
 - kind: leg
   leg: front_right
   joint: coxa
-  channel: 9
+  channel: 15
   center_us: 1546.0
   direction: -1
   min_us: 600.0
@@ -69,7 +74,7 @@ servos:
 - kind: leg
   leg: front_right
   joint: femur
-  channel: 10
+  channel: 16
   center_us: 1680.0
   direction: 1
   min_us: 600.0
@@ -78,7 +83,7 @@ servos:
 - kind: leg
   leg: front_right
   joint: tibia
-  channel: 11
+  channel: 17
   center_us: 718.0
   direction: 1
   min_us: 600.0
@@ -87,7 +92,7 @@ servos:
 - kind: leg
   leg: front_left
   joint: coxa
-  channel: 16
+  channel: 22
   center_us: 1407.0
   direction: -1
   min_us: 600.0
@@ -96,7 +101,7 @@ servos:
 - kind: leg
   leg: front_left
   joint: femur
-  channel: 15
+  channel: 21
   center_us: 1408.0
   direction: -1
   min_us: 600.0
@@ -105,7 +110,7 @@ servos:
 - kind: leg
   leg: front_left
   joint: tibia
-  channel: 17
+  channel: 23
   center_us: 2322.0
   direction: -1
   min_us: 600.0
@@ -114,7 +119,7 @@ servos:
 - kind: leg
   leg: mid_right
   joint: coxa
-  channel: 8
+  channel: 14
   center_us: 1512.0
   direction: -1
   min_us: 600.0
@@ -123,7 +128,7 @@ servos:
 - kind: leg
   leg: mid_right
   joint: femur
-  channel: 7
+  channel: 13
   center_us: 1643.0
   direction: 1
   min_us: 600.0
@@ -132,7 +137,7 @@ servos:
 - kind: leg
   leg: mid_right
   joint: tibia
-  channel: 6
+  channel: 12
   center_us: 780.0
   direction: 1
   min_us: 600.0
@@ -141,7 +146,7 @@ servos:
 - kind: leg
   leg: mid_left
   joint: coxa
-  channel: 14
+  channel: 20
   center_us: 1524.0
   direction: -1
   min_us: 600.0
@@ -150,7 +155,7 @@ servos:
 - kind: leg
   leg: mid_left
   joint: femur
-  channel: 13
+  channel: 19
   center_us: 1547.0
   direction: -1
   min_us: 600.0
@@ -159,7 +164,7 @@ servos:
 - kind: leg
   leg: mid_left
   joint: tibia
-  channel: 12
+  channel: 18
   center_us: 2333.0
   direction: -1
   min_us: 600.0
@@ -168,7 +173,7 @@ servos:
 - kind: leg
   leg: back_right
   joint: coxa
-  channel: 5
+  channel: 11
   center_us: 1345.0
   direction: -1
   min_us: 600.0
@@ -177,7 +182,7 @@ servos:
 - kind: leg
   leg: back_right
   joint: femur
-  channel: 4
+  channel: 10
   center_us: 1595.0
   direction: 1
   min_us: 600.0
@@ -186,7 +191,7 @@ servos:
 - kind: leg
   leg: back_right
   joint: tibia
-  channel: 3
+  channel: 9
   center_us: 790.0
   direction: 1
   min_us: 600.0
@@ -195,7 +200,7 @@ servos:
 - kind: leg
   leg: back_left
   joint: coxa
-  channel: 2
+  channel: 8
   center_us: 1505.0
   direction: -1
   min_us: 600.0
@@ -204,7 +209,7 @@ servos:
 - kind: leg
   leg: back_left
   joint: femur
-  channel: 1
+  channel: 7
   center_us: 1350.0
   direction: -1
   min_us: 600.0
@@ -213,7 +218,7 @@ servos:
 - kind: leg
   leg: back_left
   joint: tibia
-  channel: 0
+  channel: 6
   center_us: 2295.0
   direction: -1
   min_us: 600.0
@@ -221,7 +226,7 @@ servos:
   range_us: 940.0
 - kind: camera
   axis: pan
-  channel: 22
+  channel: 29
   center_us: 1527.0
   direction: 1
   min_us: 940.0
@@ -229,9 +234,17 @@ servos:
   range_us: 700.0
 - kind: camera
   axis: tilt
-  channel: 23
+  channel: 30
   center_us: 1391.0
   direction: 1
   min_us: 1000.0
   max_us: 2000.0
   range_us: 500.0
+foot_sensors:
+  poll_hz: 50.0
+  samples: 3
+  sensors:
+  - leg: front_left
+    channel: 0
+    enabled: true
+    calibration: null

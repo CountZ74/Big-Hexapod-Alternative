@@ -7,12 +7,13 @@ Wenn wir später Konfig aus anderen Quellen lesen wollen (z.B. JSON
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from .model import RobotConfig
+from .model import FootSensorCalibration, RobotConfig
 
 
 def load_robot_config(path: str | Path) -> RobotConfig:
@@ -45,4 +46,51 @@ def dump_robot_config(config: RobotConfig, path: str | Path) -> None:
     p = Path(path)
     data = config.model_dump(mode="json")
     with p.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(data, f, sort_keys=False, default_flow_style=False)
+        yaml.safe_dump(data, f, sort_keys=False, default_flow_style=False, allow_unicode=True)
+
+
+def save_foot_sensor_calibrations(
+    path: str | Path,
+    calibrations: Mapping[str, FootSensorCalibration],
+) -> Path:
+    """Schreibt Fußsensor-Kalibrierungen zurück in eine bestehende robot.yaml.
+
+    Bewusst als gezielter Patch auf dem rohen YAML-Baum (wie `save_z_trims`)
+    statt als kompletter Neu-Dump: so bleiben Reihenfolge und alle nicht
+    betroffenen Werte der Datei unangetastet.
+
+    Args:
+        path: Die zu ändernde robot.yaml.
+        calibrations: Bein-Name → neue Kalibrierung.
+
+    Returns:
+        Der geschriebene Pfad.
+
+    Raises:
+        KeyError: wenn für ein Bein gar kein Sensor in der Datei steht.
+    """
+    target = Path(path)
+    data: Any = yaml.safe_load(target.read_text(encoding="utf-8"))
+
+    sensors = data.get("foot_sensors", {}).get("sensors", [])
+    by_leg = {s["leg"]: s for s in sensors}
+
+    unknown = set(calibrations) - set(by_leg)
+    if unknown:
+        raise KeyError(
+            f"Für diese Beine steht kein Fußsensor in {target}: {sorted(unknown)}"
+        )
+
+    for leg, calib in calibrations.items():
+        by_leg[leg]["calibration"] = {
+            "raw_released": round(calib.raw_released, 1),
+            "raw_contact": round(calib.raw_contact, 1),
+            "threshold": round(calib.threshold, 3),
+            "hysteresis": round(calib.hysteresis, 3),
+        }
+
+    target.write_text(
+        yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False),
+        encoding="utf-8",
+    )
+    return target
