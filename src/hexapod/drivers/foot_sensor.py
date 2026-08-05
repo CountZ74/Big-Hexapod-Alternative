@@ -81,21 +81,36 @@ class FootSensorArray:
     Es gibt nichts zu erinnern, weil es keinen geschalteten Zustand gibt —
     nur einen fortlaufenden Messwert.
 
+    Die Sensoren können auf mehreren Controllern liegen — bei sechs Beinen
+    auf zwei Maestros sitzen die Sensoren jeweils lokal am Board der eigenen
+    Körperseite. Deshalb kommt hier ein Treiber je Bus herein, nicht einer.
+
     Args:
-        driver: Alles, was `read_analog(channel)` kann (Maestro, Simulator).
+        drivers: Bus-Name -> alles, was `read_analog(channel)` kann.
         config: Der `foot_sensors`-Block aus der robot.yaml.
     """
 
-    def __init__(self, driver: AnalogInput, config: FootSensorsConfig) -> None:
-        self._driver = driver
+    def __init__(
+        self, drivers: Mapping[str, AnalogInput], config: FootSensorsConfig
+    ) -> None:
+        self._drivers = dict(drivers)
         self._config = config
+        # Sensoren auf Bussen ohne Treiber werden übersprungen statt zu werfen:
+        # ein fehlender Controller soll den Roboter nicht lahmlegen.
         self._sensors: dict[str, FootSensorConfig] = {
-            s.leg: s for s in config.active
+            s.leg: s for s in config.active if s.bus in self._drivers
         }
+        skipped = [s.leg for s in config.active if s.bus not in self._drivers]
+        if skipped:
+            logger.warning(
+                "Fußsensoren ohne Treiber für ihren Bus, übersprungen: %s",
+                ", ".join(skipped),
+            )
         logger.info(
             "FootSensorArray: %d aktive Sensoren (%s)",
             len(self._sensors),
-            ", ".join(f"{leg}=ch{s.channel}" for leg, s in self._sensors.items()) or "keine",
+            ", ".join(f"{leg}={s.bus}/{s.channel}" for leg, s in self._sensors.items())
+            or "keine",
         )
 
     # ---- Bestandsaufnahme ----
@@ -128,8 +143,9 @@ class FootSensorArray:
         weichzuzeichnen.
         """
         sensor = self.sensor_config(leg)
+        driver = self._drivers[sensor.bus]
         n = self._config.samples if samples is None else max(1, samples)
-        values = [float(self._driver.read_analog(sensor.channel)) for _ in range(n)]
+        values = [float(driver.read_analog(sensor.channel)) for _ in range(n)]
         return statistics.median(values)
 
     def read_all_raw(self, *, samples: int | None = None) -> dict[str, float]:

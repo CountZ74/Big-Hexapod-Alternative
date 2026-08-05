@@ -18,8 +18,10 @@ _JOINTS = (Joint.COXA, Joint.FEMUR, Joint.TIBIA)
 def sim_robot() -> Hexapod:
     cfg = load_robot_config(CONFIG_PATH)
     data = cfg.model_dump()
-    data["driver"] = {"type": "simulator", "port": "/dev/null",
-                      "num_channels": 24, "timeout": 1.0}
+    data["buses"] = {
+        n: {"type": "simulator", "num_channels": b["num_channels"]}
+        for n, b in data["buses"].items()
+    }
     r = Hexapod(cfg.model_validate(data))
     r.stance()
     return r
@@ -32,8 +34,7 @@ def _reachable(r: Hexapod, leg: str, p: tuple[float, float, float],
     except Exception:
         return False
     for j, ang in zip(_JOINTS, angles, strict=True):
-        ch = r.config.get_leg_servo(leg, j).channel
-        mp = r._mappings[ch]
+        mp = r.mapping_for(r.config.get_leg_servo(leg, j))
         us = mp.angle_to_us(ang, clip=True)
         if us <= mp.min_us + margin or us >= mp.max_us - margin:
             return False

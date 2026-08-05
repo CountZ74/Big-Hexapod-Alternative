@@ -131,6 +131,7 @@ def run_calibration(
     config: Path = Path("config/robot.yaml"),
     simulator: bool = False,
     start_channel: int = 0,
+    bus: str | None = None,
 ) -> None:
     """Interaktive Servo-Kalibrierung."""
     if not config.exists():
@@ -143,16 +144,35 @@ def run_calibration(
     abs_min = robot_config.servo_limits.absolute_min_us
     abs_max = robot_config.servo_limits.absolute_max_us
 
-    if simulator:
+    # Kalibriert wird immer genau ein Controller — sonst waeren Kanalnummern
+    # mehrdeutig. Ohne --bus nehmen wir den ersten Maestro der Konfiguration.
+    maestro_buses = [
+        n for n, b in robot_config.buses.items() if b.type in ("maestro", "simulator")
+    ]
+    if bus is None:
+        if not maestro_buses:
+            console.print("[red]Kein Maestro-Bus in der Konfiguration.[/red]")
+            return
+        bus = maestro_buses[0]
+    if bus not in robot_config.buses:
+        console.print(
+            f"[red]Unbekannter Bus {bus!r}. Bekannt: {sorted(robot_config.buses)}[/red]"
+        )
+        return
+    bus_cfg = robot_config.get_bus(bus)
+    console.print(f"[dim]Bus: {bus} ({bus_cfg.type})[/dim]")
+
+    if simulator or bus_cfg.type == "simulator":
         driver: MaestroDriver | SimulatorDriver = SimulatorDriver(
-            num_channels=robot_config.driver.num_channels,
+            num_channels=bus_cfg.num_channels,
             verbose=False,
         )
         console.print("[yellow]Simulator-Modus — kein Servo bewegt sich.[/yellow]\n")
     else:
+        assert bus_cfg.type == "maestro"
         driver = MaestroDriver(
-            port=robot_config.driver.port,
-            num_channels=robot_config.driver.num_channels,
+            port=bus_cfg.port,
+            num_channels=bus_cfg.num_channels,
             # Manuelles Jog-Tool: bewusst langsam/sanft, damit ein weit
             # entfernter Zielwert den Servo nicht ruckartig springen laesst.
             # (Der Laufbetrieb nutzt den unbegrenzten Default.)
@@ -161,7 +181,7 @@ def run_calibration(
         )
 
     entries: list[ServoEntry] = []
-    for servo in sorted(robot_config.servos, key=lambda s: s.channel):
+    for servo in sorted(robot_config.servos_on(bus), key=lambda s: s.channel):
         if hasattr(servo, "leg") and hasattr(servo, "joint"):
             label = f"{servo.leg} · {servo.joint}"
         elif hasattr(servo, "axis"):

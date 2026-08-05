@@ -23,8 +23,10 @@ def sim_robot(tmp_path, request):
     # Echte Config laden und auf Simulator umstellen
     real = Path("config/robot.yaml")
     cfg = yaml.safe_load(real.read_text())
-    cfg["driver"]["type"] = "simulator"
-    cfg["driver"].pop("port", None)
+    cfg["buses"] = {
+        n: {"type": "simulator", "num_channels": b["num_channels"]}
+        for n, b in cfg["buses"].items()
+    }
     sim = tmp_path / "robot_sim.yaml"
     sim.write_text(yaml.dump(cfg, allow_unicode=True, sort_keys=False))
 

@@ -158,16 +158,17 @@ def test_ohne_foot_sensors_bleibt_alles_wie_bisher(minimal_config_dict: dict[str
 # ---------------------------------------------------------------------
 
 
-def test_kamera_auf_eigenem_bus_darf_kanal_wiederverwenden(
+def test_gleicher_kanal_auf_zwei_bussen_ist_erlaubt(
     minimal_config_dict: dict[str, Any],
 ) -> None:
-    """Maestro-Kanal 6 und PCA9685-Anschluss 6 sind verschiedene Anschluesse."""
+    """Kanal 6 auf 'main' und Kanal 6 auf 'camera' sind verschiedene Buchsen."""
     leg_channel = minimal_config_dict["servos"][0]["channel"]
-    minimal_config_dict["camera_driver"] = {"type": "pca9685"}
+    minimal_config_dict["buses"]["camera"] = {"type": "pca9685", "i2c_bus": 1}
     minimal_config_dict["servos"].append(
         {
             "kind": "camera",
             "axis": "pan",
+            "bus": "camera",
             "channel": leg_channel,
             "center_us": 1500.0,
             "min_us": 900.0,
@@ -176,12 +177,12 @@ def test_kamera_auf_eigenem_bus_darf_kanal_wiederverwenden(
         }
     )
     config = RobotConfig.model_validate(minimal_config_dict)
-    assert config.camera_on_own_bus
-    assert len(config.camera_bus_servos) == 1
-    assert all(s.kind == "leg" for s in config.main_bus_servos)
+    assert len(config.servos_on("camera")) == 1
+    assert all(s.kind == "leg" for s in config.servos_on("main"))
+    assert config.servo_buses == ["main", "camera"]
 
 
-def test_ohne_kamera_bus_kollidieren_kanaele_weiterhin(
+def test_gleicher_kanal_auf_demselben_bus_kollidiert(
     minimal_config_dict: dict[str, Any],
 ) -> None:
     leg_channel = minimal_config_dict["servos"][0]["channel"]
@@ -198,6 +199,42 @@ def test_ohne_kamera_bus_kollidieren_kanaele_weiterhin(
     )
     with pytest.raises(ValidationError, match="eindeutig"):
         RobotConfig.model_validate(minimal_config_dict)
+
+
+def test_unbekannter_bus_wird_abgelehnt(minimal_config_dict: dict[str, Any]) -> None:
+    minimal_config_dict["servos"][0]["bus"] = "gibt_es_nicht"
+    with pytest.raises(ValidationError, match="unbekannten Bus"):
+        RobotConfig.model_validate(minimal_config_dict)
+
+
+def test_sensor_auf_bus_ohne_analogeingaenge(minimal_config_dict: dict[str, Any]) -> None:
+    """Ein PCA9685 kann nur Servos, keine Eingaenge."""
+    minimal_config_dict["buses"]["camera"] = {"type": "pca9685", "i2c_bus": 1}
+    minimal_config_dict["foot_sensors"] = {
+        "sensors": [{"leg": "front_right", "bus": "camera", "channel": 0}]
+    }
+    with pytest.raises(ValidationError, match="keine Analogeingänge"):
+        RobotConfig.model_validate(minimal_config_dict)
+
+
+def test_sensoren_auf_zwei_bussen(minimal_config_dict: dict[str, Any]) -> None:
+    """Sechs Beine auf zwei Controllern: Sensor 0 gibt es zweimal."""
+    minimal_config_dict["buses"]["right"] = {"type": "simulator", "num_channels": 12}
+    next_channel = 0
+    for servo in minimal_config_dict["servos"]:
+        if servo["leg"].endswith("_right"):
+            servo["bus"] = "right"
+            servo["channel"] = next_channel
+            next_channel += 1
+    minimal_config_dict["foot_sensors"] = {
+        "sensors": [
+            {"leg": "front_left", "bus": "main", "channel": 0},
+            # auf "right" belegen die 9 Servos 0..8, der Sensor kommt auf 9
+            {"leg": "front_right", "bus": "right", "channel": 9},
+        ]
+    }
+    config = RobotConfig.model_validate(minimal_config_dict)
+    assert config.foot_sensors.active_buses == ["main", "right"]
 
 
 # ---------------------------------------------------------------------

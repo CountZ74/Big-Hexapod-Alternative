@@ -1,18 +1,24 @@
 name: Freenove Big Hexapod
-description: Hexapod mit Raspberry Pi + Pololu Maestro 24-Channel
+description: Hexapod mit Raspberry Pi, 2x Pololu Mini Maestro (24CH links / 12CH rechts)
 servo_limits:
   absolute_min_us: 400.0
   absolute_max_us: 2600.0
-driver:
-  type: maestro
-  port: /dev/maestro_cmd
-  num_channels: 24
-  timeout: 1.0
-camera_driver:
-  type: pca9685
-  bus: 1
-  num_channels: 32
-  freq_hz: 50.0
+buses:
+  left:
+    type: maestro
+    port: /dev/maestro_left_cmd
+    num_channels: 24
+    timeout: 1.0
+  right:
+    type: maestro
+    port: /dev/maestro_right_cmd
+    num_channels: 12
+    timeout: 1.0
+  camera:
+    type: pca9685
+    i2c_bus: 1
+    num_channels: 32
+    freq_hz: 50.0
 body:
   leg_geometry:
     coxa_length: 33.0
@@ -63,144 +69,10 @@ body:
     z_trim: 0.0
 servos:
 - kind: leg
-  leg: front_right
-  joint: coxa
-  channel: 15
-  center_us: 1546.0
-  direction: -1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: front_right
-  joint: femur
-  channel: 16
-  center_us: 1680.0
-  direction: 1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: front_right
-  joint: tibia
-  channel: 17
-  center_us: 718.0
-  direction: 1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: front_left
-  joint: coxa
-  channel: 22
-  center_us: 1407.0
-  direction: -1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: front_left
-  joint: femur
-  channel: 21
-  center_us: 1408.0
-  direction: -1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: front_left
-  joint: tibia
-  channel: 23
-  center_us: 2322.0
-  direction: -1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: mid_right
-  joint: coxa
-  channel: 14
-  center_us: 1512.0
-  direction: -1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: mid_right
-  joint: femur
-  channel: 13
-  center_us: 1643.0
-  direction: 1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: mid_right
-  joint: tibia
-  channel: 12
-  center_us: 780.0
-  direction: 1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: mid_left
-  joint: coxa
-  channel: 20
-  center_us: 1524.0
-  direction: -1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: mid_left
-  joint: femur
-  channel: 19
-  center_us: 1547.0
-  direction: -1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: mid_left
-  joint: tibia
-  channel: 18
-  center_us: 2333.0
-  direction: -1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: back_right
-  joint: coxa
-  channel: 11
-  center_us: 1345.0
-  direction: -1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: back_right
-  joint: femur
-  channel: 10
-  center_us: 1595.0
-  direction: 1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
-  leg: back_right
-  joint: tibia
-  channel: 9
-  center_us: 790.0
-  direction: 1
-  min_us: 600.0
-  max_us: 2600.0
-  range_us: 940.0
-- kind: leg
   leg: back_left
   joint: coxa
-  channel: 8
+  bus: left
+  channel: 1
   center_us: 1505.0
   direction: -1
   min_us: 600.0
@@ -209,7 +81,8 @@ servos:
 - kind: leg
   leg: back_left
   joint: femur
-  channel: 7
+  bus: left
+  channel: 2
   center_us: 1350.0
   direction: -1
   min_us: 600.0
@@ -218,14 +91,166 @@ servos:
 - kind: leg
   leg: back_left
   joint: tibia
-  channel: 6
+  bus: left
+  channel: 3
   center_us: 2295.0
   direction: -1
   min_us: 600.0
   max_us: 2600.0
   range_us: 940.0
+- kind: leg
+  leg: mid_left
+  joint: coxa
+  bus: left
+  channel: 5
+  center_us: 1524.0
+  direction: -1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: mid_left
+  joint: femur
+  bus: left
+  channel: 6
+  center_us: 1547.0
+  direction: -1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: mid_left
+  joint: tibia
+  bus: left
+  channel: 7
+  center_us: 2333.0
+  direction: -1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: front_left
+  joint: coxa
+  bus: left
+  channel: 9
+  center_us: 1407.0
+  direction: -1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: front_left
+  joint: femur
+  bus: left
+  channel: 10
+  center_us: 1408.0
+  direction: -1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: front_left
+  joint: tibia
+  bus: left
+  channel: 11
+  center_us: 2322.0
+  direction: -1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: back_right
+  joint: coxa
+  bus: right
+  channel: 1
+  center_us: 1345.0
+  direction: -1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: back_right
+  joint: femur
+  bus: right
+  channel: 2
+  center_us: 1595.0
+  direction: 1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: back_right
+  joint: tibia
+  bus: right
+  channel: 3
+  center_us: 790.0
+  direction: 1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: mid_right
+  joint: coxa
+  bus: right
+  channel: 5
+  center_us: 1512.0
+  direction: -1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: mid_right
+  joint: femur
+  bus: right
+  channel: 6
+  center_us: 1643.0
+  direction: 1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: mid_right
+  joint: tibia
+  bus: right
+  channel: 7
+  center_us: 780.0
+  direction: 1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: front_right
+  joint: coxa
+  bus: right
+  channel: 9
+  center_us: 1546.0
+  direction: -1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: front_right
+  joint: femur
+  bus: right
+  channel: 10
+  center_us: 1680.0
+  direction: 1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
+- kind: leg
+  leg: front_right
+  joint: tibia
+  bus: right
+  channel: 11
+  center_us: 718.0
+  direction: 1
+  min_us: 600.0
+  max_us: 2600.0
+  range_us: 940.0
 - kind: camera
   axis: pan
+  bus: camera
   channel: 29
   center_us: 1527.0
   direction: 1
@@ -234,6 +259,7 @@ servos:
   range_us: 700.0
 - kind: camera
   axis: tilt
+  bus: camera
   channel: 30
   center_us: 1391.0
   direction: 1
@@ -244,7 +270,33 @@ foot_sensors:
   poll_hz: 50.0
   samples: 3
   sensors:
-  - leg: front_left
+  - leg: back_left
+    bus: left
     channel: 0
+    enabled: true
+    calibration: null
+  - leg: mid_left
+    bus: left
+    channel: 4
+    enabled: true
+    calibration: null
+  - leg: front_left
+    bus: left
+    channel: 8
+    enabled: true
+    calibration: null
+  - leg: back_right
+    bus: right
+    channel: 0
+    enabled: true
+    calibration: null
+  - leg: mid_right
+    bus: right
+    channel: 4
+    enabled: true
+    calibration: null
+  - leg: front_right
+    bus: right
+    channel: 8
     enabled: true
     calibration: null

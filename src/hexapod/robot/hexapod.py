@@ -21,6 +21,7 @@ from hexapod.config import (
     CameraAxis,
     CameraServoConfig,
     Joint,
+    LegServoConfig,
     RobotConfig,
 )
 from hexapod.config.loader import load_robot_config
@@ -86,8 +87,10 @@ class Hexapod:
     def __init__(self, config: RobotConfig) -> None:
         self._config = config
         self._config_path: Path | None = None
-        self._driver = self._create_driver()
-        self._camera_driver = self._create_camera_driver()
+        # Feste Bus-Reihenfolge. Sie bestimmt, in welcher Reihenfolge pro Takt
+        # geschrieben wird — siehe _send().
+        self._bus_order: list[str] = list(config.buses)
+        self._drivers: dict[str, ServoDriver] = self._create_drivers()
 
         # Bein-Geometrie (für alle Beine gleich)
         geo = config.body.leg_geometry
@@ -97,36 +100,39 @@ class Hexapod:
             tibia=geo.tibia_length,
         )
 
-        # Pro Servo ein Mapping erzeugen (channel → ServoMapping).
-        # Hängen die Kamera-Servos an einem eigenen Bus (PCA9685), bekommen
-        # sie eine eigene Tabelle: sonst würden sich Kanalnummern der beiden
-        # Busse gegenseitig überschreiben.
-        self._mappings: dict[int, ServoMapping] = {}
-        self._camera_mappings: dict[int, ServoMapping] = {}
+        # Pro Servo ein Mapping, geschachtelt nach Bus. Kanalnummern
+        # wiederholen sich über Busse hinweg — Kanal 3 auf 'left' ist eine
+        # andere Buchse als Kanal 3 auf 'right'. Eine flache Tabelle würde
+        # sie gegenseitig überschreiben.
+        self._mappings: dict[str, dict[int, ServoMapping]] = {
+            bus: {} for bus in self._bus_order
+        }
         for servo in config.servos:
-            mapping = ServoMapping(
+            self._mappings[servo.bus][servo.channel] = ServoMapping(
                 center_us=servo.center_us,
                 range_us=servo.range_us,
                 direction=servo.direction,
                 min_us=servo.min_us,
                 max_us=servo.max_us,
             )
-            if config.camera_on_own_bus and isinstance(servo, CameraServoConfig):
-                self._camera_mappings[servo.channel] = mapping
-            else:
-                self._mappings[servo.channel] = mapping
 
-        # Fußsensoren — nur wenn konfiguriert UND der Treiber analog lesen kann.
+        # Fußsensoren — je Bus ein Treiber, sofern der analog lesen kann.
         self._foot_sensors: FootSensorArray | None = None
         if config.foot_sensors.active:
-            if isinstance(self._driver, AnalogInput):
-                self._foot_sensors = FootSensorArray(self._driver, config.foot_sensors)
-            else:
-                logger.warning(
-                    "Fußsensoren konfiguriert, aber Treiber %s kann keine "
-                    "Analogeingänge lesen — Sensoren bleiben aus.",
-                    type(self._driver).__name__,
-                )
+            analog: dict[str, AnalogInput] = {}
+            for bus in config.foot_sensors.active_buses:
+                driver = self._drivers[bus]
+                if isinstance(driver, AnalogInput):
+                    analog[bus] = driver
+                else:
+                    logger.warning(
+                        "Fußsensoren auf Bus %r, aber Treiber %s kann keine "
+                        "Analogeingänge lesen — diese Sensoren bleiben aus.",
+                        bus,
+                        type(driver).__name__,
+                    )
+            if analog:
+                self._foot_sensors = FootSensorArray(analog, config.foot_sensors)
 
         # Bein-Zustand tracken
         self._leg_states: dict[str, LegState] = {
@@ -192,11 +198,11 @@ class Hexapod:
         }
 
         logger.info(
-            "Hexapod initialisiert: %s, %d Beine, %d Servos, Driver=%s",
+            "Hexapod initialisiert: %s, %d Beine, %d Servos, Busse=%s",
             config.name,
             len(config.body.legs),
             len(config.servos),
-            config.driver.type,
+            ", ".join(f"{b}({config.buses[b].type})" for b in self._bus_order),
         )
 
     # ---- Factory-Methoden ----
@@ -211,56 +217,55 @@ class Hexapod:
 
     # ---- Driver-Erzeugung ----
 
-    def _create_driver(self) -> ServoDriver:
-        dc = self._config.driver
-        if dc.type == "maestro":
-            lim = self._config.servo_limits
-            return MaestroDriver(
-                port=dc.port,
-                num_channels=dc.num_channels,
-                timeout=dc.timeout,
-                min_pulse_us=lim.absolute_min_us,
-                max_pulse_us=lim.absolute_max_us,
-            )
-        elif dc.type == "simulator":
-            lim = self._config.servo_limits
-            return SimulatorDriver(
-                num_channels=dc.num_channels,
-                verbose=True,
-                min_pulse_us=lim.absolute_min_us,
-                max_pulse_us=lim.absolute_max_us,
-            )
-        else:
-            raise ValueError(f"Unbekannter Driver-Typ: {dc.type!r}")
-
-    def _create_camera_driver(self) -> ServoDriver | None:
-        """Zweiter Treiber nur für Pan/Tilt — None, wenn nicht konfiguriert.
-
-        Auf der Freenove-Platine hängen die Kamera-Servos an den beiden
-        PCA9685 (Anschluss 29/30), nicht am Maestro. Fehlt der Block in der
-        robot.yaml, bleibt alles beim Alten und die Kamera läuft über den
-        Haupttreiber.
-        """
-        cc = self._config.camera_driver
-        if cc is None:
-            return None
+    def _create_drivers(self) -> dict[str, ServoDriver]:
+        """Baut fuer jeden konfigurierten Bus genau einen Treiber."""
         lim = self._config.servo_limits
-        if cc.type == "pca9685":
-            return Pca9685Driver(
-                bus=cc.bus,
-                num_channels=cc.num_channels,
-                freq_hz=cc.freq_hz,
-                min_pulse_us=lim.absolute_min_us,
-                max_pulse_us=lim.absolute_max_us,
-            )
-        elif cc.type == "simulator":
-            return SimulatorDriver(
-                num_channels=cc.num_channels,
-                min_pulse_us=lim.absolute_min_us,
-                max_pulse_us=lim.absolute_max_us,
-            )
-        else:
-            raise ValueError(f"Unbekannter Kamera-Driver-Typ: {cc.type!r}")
+        drivers: dict[str, ServoDriver] = {}
+        for name, bus in self._config.buses.items():
+            if bus.type == "maestro":
+                drivers[name] = MaestroDriver(
+                    port=bus.port,
+                    num_channels=bus.num_channels,
+                    timeout=bus.timeout,
+                    min_pulse_us=lim.absolute_min_us,
+                    max_pulse_us=lim.absolute_max_us,
+                )
+            elif bus.type == "pca9685":
+                drivers[name] = Pca9685Driver(
+                    bus=bus.i2c_bus,
+                    num_channels=bus.num_channels,
+                    freq_hz=bus.freq_hz,
+                    min_pulse_us=lim.absolute_min_us,
+                    max_pulse_us=lim.absolute_max_us,
+                )
+            elif bus.type == "simulator":
+                drivers[name] = SimulatorDriver(
+                    num_channels=bus.num_channels,
+                    min_pulse_us=lim.absolute_min_us,
+                    max_pulse_us=lim.absolute_max_us,
+                )
+            else:
+                raise ValueError(f"Unbekannter Bus-Typ: {bus.type!r}")
+        return drivers
+
+    # ---- Senden ----
+
+    def _send(self, by_bus: dict[str, dict[int, float]]) -> None:
+        """Positionen busweise senden, immer in derselben Reihenfolge.
+
+        Mit mehreren Controllern zerfaellt das frueher eine USB-Paket in
+        mehrere. Die feste Reihenfolge sorgt dafuer, dass der Versatz
+        zwischen den Bussen ein konstanter Offset bleibt statt zu jittern —
+        konstante Offsets sieht man dem Gang nicht an, Jitter schon.
+        """
+        for bus in self._bus_order:
+            positions = by_bus.get(bus)
+            if positions:
+                self._drivers[bus].set_positions(positions)
+
+    def mapping_for(self, servo: LegServoConfig | CameraServoConfig) -> ServoMapping:
+        """Das ServoMapping eines Servos ueber seine (Bus, Kanal)-Adresse."""
+        return self._mappings[servo.bus][servo.channel]
 
     # ---- Properties ----
 
@@ -270,17 +275,22 @@ class Hexapod:
         return self._foot_sensors
 
     @property
-    def camera_driver(self) -> ServoDriver | None:
-        """Eigener Kamera-Treiber, oder None wenn Pan/Tilt am Haupttreiber hängt."""
-        return self._camera_driver
+    def drivers(self) -> dict[str, ServoDriver]:
+        """Alle Treiber, Bus-Name -> Treiber (Kopie)."""
+        return dict(self._drivers)
+
+    def bus_driver(self, bus: str) -> ServoDriver:
+        """Treiber eines einzelnen Busses."""
+        try:
+            return self._drivers[bus]
+        except KeyError:
+            raise KeyError(
+                f"Unbekannter Bus {bus!r}. Bekannt: {sorted(self._drivers)}"
+            ) from None
 
     @property
     def config(self) -> RobotConfig:
         return self._config
-
-    @property
-    def driver(self) -> ServoDriver:
-        return self._driver
 
     @property
     def leg_names(self) -> list[str]:
@@ -340,14 +350,13 @@ class Hexapod:
             (Joint.TIBIA, theta3),
         ]
 
-        positions: dict[int, float] = {}
+        by_bus: dict[str, dict[int, float]] = {}
         for joint, angle in joints:
             servo_cfg = self._config.get_leg_servo(leg_name, joint)
-            mapping = self._mappings[servo_cfg.channel]
-            us = mapping.angle_to_us(angle, clip=clip)
-            positions[servo_cfg.channel] = us
+            us = self.mapping_for(servo_cfg).angle_to_us(angle, clip=clip)
+            by_bus.setdefault(servo_cfg.bus, {})[servo_cfg.channel] = us
 
-        self._driver.set_positions(positions)
+        self._send(by_bus)
 
         state = self._leg_states[leg_name]
         state.theta1 = theta1
@@ -527,12 +536,16 @@ class Hexapod:
         Returns:
             Anzahl geprimeter Kanäle (0 wenn der Driver es nicht unterstützt).
         """
-        prime_fn = getattr(self._driver, "prime", None)
-        if prime_fn is None:
-            return 0
-        n: int = prime_fn()
-        logger.info("prime(): %d Kanäle vorbereitet", n)
-        return n
+        total = 0
+        for bus, driver in self._drivers.items():
+            prime_fn = getattr(driver, "prime", None)
+            if prime_fn is None:
+                continue
+            n: int = prime_fn()
+            logger.debug("prime(%s): %d Kanäle", bus, n)
+            total += n
+        logger.info("prime(): %d Kanäle vorbereitet", total)
+        return total
 
 
     def reconstruct_state_from_hardware(self) -> None:
@@ -542,9 +555,8 @@ class Hexapod:
                 angles: dict[Joint, float] = {}
                 for joint in (Joint.COXA, Joint.FEMUR, Joint.TIBIA):
                     servo_cfg = self._config.get_leg_servo(leg_name, joint)
-                    channel = servo_cfg.channel
-                    us = self._driver.get_position(channel)
-                    angles[joint] = self._mappings[channel].us_to_angle(us)
+                    us = self._drivers[servo_cfg.bus].get_position(servo_cfg.channel)
+                    angles[joint] = self.mapping_for(servo_cfg).us_to_angle(us)
                 theta1 = angles[Joint.COXA]
                 theta2 = angles[Joint.FEMUR]
                 theta3 = angles[Joint.TIBIA]
@@ -575,7 +587,7 @@ class Hexapod:
                 raise
         logger.info("Hardware-Zustand erfolgreich rekonstruiert (%d Beine)", len(self._leg_names))
 
-    def read_servo_state(self) -> dict[int, dict[str, float | None]]:
+    def read_servo_state(self) -> dict[str, dict[str, float | None]]:
         """Rein lesender Snapshot aller Servo-Kanaele (mutiert NICHTS).
 
         Liest pro Kanal die zuletzt gehaltene Pulsweite vom Treiber zurueck
@@ -585,23 +597,24 @@ class Hexapod:
         Telemetrie-Schleife robust.
 
         Returns:
-            {channel: {"us": float|None, "angle_rad": float|None}}
+            {"<bus>:<channel>": {"us": float|None, "angle_rad": float|None}}
         """
-        out: dict[int, dict[str, float | None]] = {}
+        out: dict[str, dict[str, float | None]] = {}
         for servo in self._config.servos:
             ch = servo.channel
+            key = f"{servo.bus}:{ch}"
             try:
-                us = self._driver.get_position(ch)
+                us = self._drivers[servo.bus].get_position(ch)
             except Exception:
-                out[ch] = {"us": None, "angle_rad": None}
+                out[key] = {"us": None, "angle_rad": None}
                 continue
             angle: float | None = None
             if us and us > 0:
                 try:
-                    angle = self._mappings[ch].us_to_angle(us)
+                    angle = self.mapping_for(servo).us_to_angle(us)
                 except Exception:
                     angle = None
-            out[ch] = {"us": us, "angle_rad": angle}
+            out[key] = {"us": us, "angle_rad": angle}
         return out
 
     def goto_stance(
@@ -683,7 +696,7 @@ class Hexapod:
         clip: bool = False,
     ) -> None:
         """Setze Fußpositionen für mehrere Beine gleichzeitig."""
-        all_positions: dict[int, float] = {}
+        by_bus: dict[str, dict[int, float]] = {}
 
         for leg_name, (x, y, z) in targets.items():
             theta1, theta2, theta3 = inverse_kinematics(x, y, z, self._leg_lengths)
@@ -696,9 +709,8 @@ class Hexapod:
 
             for joint, angle in joints:
                 servo_cfg = self._config.get_leg_servo(leg_name, joint)
-                mapping = self._mappings[servo_cfg.channel]
-                us = mapping.angle_to_us(angle, clip=clip)
-                all_positions[servo_cfg.channel] = us
+                us = self.mapping_for(servo_cfg).angle_to_us(angle, clip=clip)
+                by_bus.setdefault(servo_cfg.bus, {})[servo_cfg.channel] = us
 
             state = self._leg_states[leg_name]
             state.theta1 = theta1
@@ -706,7 +718,7 @@ class Hexapod:
             state.theta3 = theta3
             state.foot_x, state.foot_y, state.foot_z = x, y, z
 
-        self._driver.set_positions(all_positions)
+        self._send(by_bus)
 
     # ---- Body-Pose ----
 
@@ -751,12 +763,7 @@ class Hexapod:
         self, pan_deg: float = 0.0, tilt_deg: float = 0.0, *, clip: bool = True
     ) -> None:
         """Setzt Pan/Tilt der Kamera in Grad."""
-        # Kamera-Servos können an einem eigenen Bus hängen (PCA9685).
-        driver = self._camera_driver if self._camera_driver is not None else self._driver
-        mappings = (
-            self._camera_mappings if self._camera_driver is not None else self._mappings
-        )
-        positions: dict[int, float] = {}
+        by_bus: dict[str, dict[int, float]] = {}
         for axis, angle_deg in [
             (CameraAxis.PAN, pan_deg),
             (CameraAxis.TILT, tilt_deg),
@@ -765,11 +772,11 @@ class Hexapod:
                 servo_cfg = self._config.get_camera_servo(axis)
             except KeyError:
                 continue
-            mapping = mappings[servo_cfg.channel]
-            us = mapping.angle_to_us(math.radians(angle_deg), clip=clip)
-            positions[servo_cfg.channel] = us
-        if positions:
-            driver.set_positions(positions)
+            us = self.mapping_for(servo_cfg).angle_to_us(
+                math.radians(angle_deg), clip=clip
+            )
+            by_bus.setdefault(servo_cfg.bus, {})[servo_cfg.channel] = us
+        self._send(by_bus)
 
     # ---- Convenience-Methoden ----
 
@@ -797,9 +804,10 @@ class Hexapod:
             delay_per_leg: Wartezeit pro Bein in Sekunden.
         """
         import time
-        num_ch = self._config.driver.num_channels
-        self._driver.set_speed_all(num_ch, speed)
-        self._driver.set_acceleration_all(num_ch, acceleration)
+        for bus_name, driver in self._drivers.items():
+            num_ch = self._config.buses[bus_name].num_channels
+            driver.set_speed_all(num_ch, speed)
+            driver.set_acceleration_all(num_ch, acceleration)
         # Warten bis alle Speed/Acceleration-Befehle verarbeitet sind:
         # 24 Kanäle × 2 Befehle × 10ms = ~480ms + Puffer
         time.sleep(1.0)
@@ -807,17 +815,30 @@ class Hexapod:
             self.set_leg_angles(name, 0.0, 0.0, 0.0, clip=True)
             time.sleep(delay_per_leg)
 
+    def set_speed_all(self, speed: int) -> None:
+        """Servo-Geschwindigkeit auf allen Bussen setzen (0 = unbegrenzt)."""
+        for bus_name, driver in self._drivers.items():
+            driver.set_speed_all(self._config.buses[bus_name].num_channels, speed)
+
+    def set_acceleration_all(self, acceleration: int) -> None:
+        """Servo-Beschleunigung auf allen Bussen setzen (0 = unbegrenzt)."""
+        for bus_name, driver in self._drivers.items():
+            driver.set_acceleration_all(
+                self._config.buses[bus_name].num_channels, acceleration
+            )
+
     def disable_all(self) -> None:
         """Alle Servos stromlos schalten."""
-        self._driver.disable_all(self._config.driver.num_channels)
+        for bus_name, driver in self._drivers.items():
+            driver.disable_all(self._config.buses[bus_name].num_channels)
 
-    def set_servo_us(self, channel: int, microseconds: float) -> None:
+    def set_servo_us(self, bus: str, channel: int, microseconds: float) -> None:
         """Direkt µs an einen Kanal schicken (für Kalibrierung)."""
-        self._driver.set_position(channel, microseconds)
+        self.bus_driver(bus).set_position(channel, microseconds)
 
-    def get_servo_us(self, channel: int) -> float:
+    def get_servo_us(self, bus: str, channel: int) -> float:
         """Aktuelle Soll-Position eines Kanals in µs lesen."""
-        return self._driver.get_position(channel)
+        return self.bus_driver(bus).get_position(channel)
 
     # ---- Context Manager ----
 
@@ -833,12 +854,11 @@ class Hexapod:
                 self.disable_all()
             except Exception as e:
                 logger.warning("Fehler beim Deaktivieren: %s", e)
-        if self._camera_driver is not None:
+        for bus_name, driver in self._drivers.items():
             try:
-                self._camera_driver.close(disable=disable)
+                driver.close(disable=disable)
             except Exception as e:
-                logger.warning("Fehler beim Schließen des Kamera-Treibers: %s", e)
-        self._driver.close(disable=disable)
+                logger.warning("Fehler beim Schließen von Bus %r: %s", bus_name, e)
 
     def __enter__(self) -> Hexapod:
         return self

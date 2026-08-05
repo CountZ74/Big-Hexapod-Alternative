@@ -21,8 +21,10 @@ CONFIG_PATH = "config/robot.yaml"
 def sim_hexapod() -> Hexapod:
     config = load_robot_config(CONFIG_PATH)
     data = config.model_dump()
-    data["driver"] = {"type": "simulator", "port": "/dev/null",
-                      "num_channels": 24, "timeout": 1.0}
+    data["buses"] = {
+        n: {"type": "simulator", "num_channels": b["num_channels"]}
+        for n, b in data["buses"].items()
+    }
     return Hexapod(config.model_validate(data))
 
 
@@ -32,15 +34,24 @@ def _max_jump_during_lie_down(robot, monkeypatch, *, settle_first: bool) -> floa
     move_to_body_pose(robot, BodyPose(tz=20.0, pitch=0.15), steps=8, rate_hz=200.0)
 
     # Basis = tatsaechlich anliegende Servo-Lage VOR dem Absetzen.
-    base = {ch: us for ch, us in robot._driver.snapshot().items() if us > 0}
-    frames: list[dict[int, float]] = [base]
-    orig = robot._driver.set_positions
+    # Mit mehreren Bussen ueber alle Treiber sammeln. Die Kanalnummern
+    # wiederholen sich, daher (Bus, Kanal) als Schluessel.
+    base = {
+        (bus, ch): us
+        for bus, drv in robot.drivers.items()
+        for ch, us in drv.snapshot().items()
+        if us > 0
+    }
+    frames: list[dict[tuple[str, int], float]] = [base]
 
-    def spy(positions, *a, **k):
-        frames.append(dict(positions))
-        return orig(positions, *a, **k)
+    def make_spy(bus, orig):
+        def spy(positions, *a, **k):
+            frames.append({(bus, ch): us for ch, us in positions.items()})
+            return orig(positions, *a, **k)
+        return spy
 
-    monkeypatch.setattr(robot._driver, "set_positions", spy)
+    for bus, drv in robot.drivers.items():
+        monkeypatch.setattr(drv, "set_positions", make_spy(bus, drv.set_positions))
     lie_down(robot, settle_first=settle_first)
 
     max_jump = 0.0

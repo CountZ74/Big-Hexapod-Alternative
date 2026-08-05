@@ -56,8 +56,7 @@ def _max_line_lift(
         except Exception:
             return False
         for j, ang in zip(joints, angles, strict=True):
-            ch = robot.config.get_leg_servo(leg, j).channel
-            mp = robot._mappings[ch]
+            mp = robot.mapping_for(robot.config.get_leg_servo(leg, j))
             us = mp.angle_to_us(ang, clip=True)
             if us <= mp.min_us + margin_us or us >= mp.max_us - margin_us:
                 return False

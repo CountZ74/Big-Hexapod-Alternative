@@ -10,7 +10,6 @@ from hexapod.config import (
     BodyConfig,
     CameraAxis,
     CameraServoConfig,
-    DriverConfig,
     Joint,
     LegConfig,
     LegGeometry,
@@ -18,6 +17,7 @@ from hexapod.config import (
     LegServoConfig,
     LegSide,
     RobotConfig,
+    SimulatorBus,
 )
 
 
@@ -59,7 +59,7 @@ def minimal_body(minimal_legs: list[LegConfig]) -> BodyConfig:
 
 @pytest.fixture
 def minimal_servos() -> list[LegServoConfig | CameraServoConfig]:
-    """18 Bein-Servos + 2 Kamera-Servos, eindeutige Kanäle."""
+    """18 Bein-Servos + 2 Kamera-Servos, eindeutige Kanäle auf einem Bus."""
     leg_names = [
         "front_right", "front_left",
         "mid_right",   "mid_left",
@@ -71,7 +71,6 @@ def minimal_servos() -> list[LegServoConfig | CameraServoConfig]:
         for joint in [Joint.COXA, Joint.FEMUR, Joint.TIBIA]:
             out.append(_leg_servo(name, joint, channel))
             channel += 1
-    # Kamera
     out.append(CameraServoConfig(
         axis=CameraAxis.PAN, channel=channel,
         center_us=1500.0, direction=1, min_us=800.0, max_us=2200.0, range_us=700.0,
@@ -89,10 +88,14 @@ def minimal_config(
     minimal_body: BodyConfig,
     minimal_servos: list[LegServoConfig | CameraServoConfig],
 ) -> RobotConfig:
-    """Eine vollständig gültige RobotConfig zum Aufbauen von Tests."""
+    """Eine vollständig gültige RobotConfig zum Aufbauen von Tests.
+
+    Ein einziger Bus namens "main" — das ist auch der Default für Servos
+    und Sensoren, die kein bus-Feld mitbringen.
+    """
     return RobotConfig(
         name="Test Hexapod",
-        driver=DriverConfig(type="simulator", port="/dev/null", num_channels=24),
+        buses={"main": SimulatorBus(num_channels=24)},
         body=minimal_body,
         servos=minimal_servos,
     )
@@ -100,12 +103,12 @@ def minimal_config(
 
 @pytest.fixture
 def minimal_config_dict(minimal_config: RobotConfig) -> dict[str, Any]:
-    """Dieselbe Konfig als rohes dict, aber mit dem echten Kanal-Layout.
+    """Dieselbe Konfig als rohes dict, mit realistischerem Kanal-Layout.
 
-    Die Beinservos liegen auf 6..23 (wie am umgebauten Roboter), damit die
-    Maestro-Kanäle 0..5 als Analogeingänge für die Fußsensoren frei sind.
-    Kamera-Servos sind bewusst nicht enthalten — die Tests, die sie brauchen,
-    hängen sie selbst an und bestimmen dabei den Bus.
+    Die Beinservos liegen auf 6..23, damit die Kanäle 0..5 als
+    Analogeingänge für die Fußsensoren frei sind. Kamera-Servos sind
+    bewusst nicht enthalten — Tests, die sie brauchen, hängen sie selbst
+    an und bestimmen dabei den Bus.
     """
     data: dict[str, Any] = minimal_config.model_dump(mode="json")
     data["servos"] = [s for s in data["servos"] if s["kind"] == "leg"]

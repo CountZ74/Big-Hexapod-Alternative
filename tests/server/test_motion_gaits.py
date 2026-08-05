@@ -16,8 +16,10 @@ CONFIG_PATH = "config/robot.yaml"
 def sim_robot() -> Hexapod:
     config = load_robot_config(CONFIG_PATH)
     data = config.model_dump()
-    data["driver"] = {"type": "simulator", "port": "/dev/null",
-                      "num_channels": 24, "timeout": 1.0}
+    data["buses"] = {
+        n: {"type": "simulator", "num_channels": b["num_channels"]}
+        for n, b in data["buses"].items()
+    }
     return Hexapod(config.model_validate(data))
 
 

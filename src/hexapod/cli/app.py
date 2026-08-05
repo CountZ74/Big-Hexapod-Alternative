@@ -31,10 +31,16 @@ def calibrate(
         "--start", "-n",
         help="Mit diesem Kanal beginnen (0-basiert)",
     ),
+    bus: str | None = typer.Option(
+        None, "--bus", "-b",
+        help="Welcher Controller (Default: erster Maestro der Konfiguration)",
+    ),
 ) -> None:
-    """Interaktive Servo-Kalibrierung."""
+    """Interaktive Servo-Kalibrierung (immer genau ein Controller)."""
     from .calibrate import run_calibration
-    run_calibration(config=config, simulator=simulator, start_channel=start_channel)
+    run_calibration(
+        config=config, simulator=simulator, start_channel=start_channel, bus=bus
+    )
 
 
 _CONFIG_OPT = typer.Option(

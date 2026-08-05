@@ -32,7 +32,7 @@ def _config(**overrides: object) -> FootSensorsConfig:
 def _array(raw: int, **overrides: object) -> tuple[FootSensorArray, SimulatorDriver]:
     driver = SimulatorDriver(num_channels=24)
     driver.set_analog(0, raw)
-    return FootSensorArray(driver, _config(**overrides)), driver
+    return FootSensorArray({"main": driver}, _config(**overrides)), driver
 
 
 # ---------------------------------------------------------------------
@@ -59,7 +59,7 @@ def test_median_filtert_ausreisser() -> None:
     config = FootSensorsConfig.model_validate(
         {"samples": 3, "sensors": [{"leg": "front_left", "channel": 0}]}
     )
-    sensors = FootSensorArray(ZackigerTreiber(), config)
+    sensors = FootSensorArray({"main": ZackigerTreiber()}, config)
     assert sensors.read_raw("front_left") == pytest.approx(500.0)
 
 
@@ -169,7 +169,7 @@ def test_levels_liefert_nur_kalibrierte() -> None:
             ],
         }
     )
-    sensors = FootSensorArray(driver, config)
+    sensors = FootSensorArray({"main": driver}, config)
     assert sensors.levels() == {"front_left": pytest.approx(1.0)}
 
 
@@ -191,7 +191,7 @@ def _zwei_beine(raw_a: int, raw_b: int) -> FootSensorArray:
             ],
         }
     )
-    return FootSensorArray(driver, config)
+    return FootSensorArray({"main": driver}, config)
 
 
 def test_gleiche_last_haelfte_haelfte() -> None:

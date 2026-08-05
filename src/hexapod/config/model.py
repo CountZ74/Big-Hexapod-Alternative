@@ -34,6 +34,11 @@ class StrictBase(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
 
+# Name des Busses, den ein Servo oder Sensor bekommt, wenn nichts dabeisteht.
+# Für Aufbauten mit nur einem Controller bleibt die YAML damit knapp.
+DEFAULT_BUS = "main"
+
+
 # =====================================================================
 # Globale Servo-Sicherheitsgrenzen — eine einzige Quelle der Wahrheit
 # =====================================================================
@@ -47,16 +52,8 @@ class ServoLimits(StrictBase):
     durch Tippfehler in der YAML oder Bugs im Code.
     """
 
-    absolute_min_us: float = Field(
-        default=400.0,
-        gt=0.0,
-        description="Untere absolute Grenze [µs] — nie unterschritten.",
-    )
-    absolute_max_us: float = Field(
-        default=2600.0,
-        gt=0.0,
-        description="Obere absolute Grenze [µs] — nie überschritten.",
-    )
+    absolute_min_us: float = Field(default=400.0, gt=0.0)
+    absolute_max_us: float = Field(default=2600.0, gt=0.0)
 
     @model_validator(mode="after")
     def _validate_ordering(self) -> ServoLimits:
@@ -68,31 +65,47 @@ class ServoLimits(StrictBase):
         return self
 
 
-class DriverConfig(StrictBase):
-    """Haupttreiber — der Maestro mit den 18 Beinservos."""
+# =====================================================================
+# Busse — ein Bus ist ein physischer Controller
+# =====================================================================
 
-    type: Literal["maestro", "simulator"] = Field(default="maestro")
-    port: str = Field(default="/dev/maestro_cmd")
+
+class MaestroBus(StrictBase):
+    """Ein Pololu Maestro am USB.
+
+    Kann Servos ansteuern UND auf den Kanälen 0..11 analog messen —
+    daher hängen die Fußsensoren an genau so einem Bus.
+    """
+
+    type: Literal["maestro"] = "maestro"
+    port: str = Field(default="/dev/maestro_cmd", min_length=1)
     num_channels: int = Field(default=24, gt=0, le=24)
     timeout: float = Field(default=1.0, gt=0.0)
 
 
-class CameraDriverConfig(StrictBase):
-    """Optionaler zweiter Treiber nur für die Kamera-Servos.
+class Pca9685Bus(StrictBase):
+    """Die beiden PCA9685 der Freenove-Platine (nur Servos, keine Eingänge)."""
 
-    Auf der Freenove-Platine hängen Pan/Tilt an den beiden PCA9685
-    (Anschluss 29 und 30). Ist dieser Block gesetzt, liegen die
-    `kind: camera`-Servos auf DIESEM Bus — ihre Kanalnummern sind
-    dann unabhängig von den Maestro-Kanälen.
-
-    Fehlt der Block, bleibt alles beim Alten: auch die Kamera-Servos
-    hängen am Haupttreiber (rückwärtskompatibel).
-    """
-
-    type: Literal["pca9685", "simulator"] = Field(default="pca9685")
-    bus: int = Field(default=1, ge=0, description="I2C-Busnummer (Pi: immer 1).")
+    type: Literal["pca9685"] = "pca9685"
+    i2c_bus: int = Field(default=1, ge=0)
     num_channels: int = Field(default=32, gt=0, le=32)
     freq_hz: float = Field(default=50.0, gt=0.0)
+
+
+class SimulatorBus(StrictBase):
+    """Kein echter Controller — hält Positionen im RAM (Tests, Entwicklung)."""
+
+    type: Literal["simulator"] = "simulator"
+    num_channels: int = Field(default=24, gt=0, le=32)
+
+
+BusConfig = Annotated[
+    MaestroBus | Pca9685Bus | SimulatorBus,
+    Field(discriminator="type"),
+]
+
+# Nur diese Bus-Typen haben Analogeingänge.
+ANALOG_CAPABLE_BUS_TYPES = ("maestro", "simulator")
 
 
 class LegGeometry(StrictBase):
@@ -134,12 +147,18 @@ class BodyConfig(StrictBase):
 
 
 class _ServoCommon(StrictBase):
+    bus: str = Field(default=DEFAULT_BUS, min_length=1)
     channel: int = Field(ge=0, lt=32)
     center_us: float = Field(gt=0.0)
     direction: Literal[-1, 1] = Field(default=1)
     min_us: float = Field(gt=0.0)
     max_us: float = Field(gt=0.0)
     range_us: float = Field(gt=0.0)
+
+    @property
+    def address(self) -> tuple[str, int]:
+        """Eindeutige Adresse: Kanalnummern wiederholen sich über Busse hinweg."""
+        return (self.bus, self.channel)
 
     @model_validator(mode="after")
     def _validate_us_ordering(self) -> _ServoCommon:
@@ -177,11 +196,11 @@ ServoConfig = Annotated[
 # Der Maestro liefert Analogwerte als 10-Bit-Zahl (0 = 0 V, 1023 = 5 V).
 ANALOG_MAX = 1023.0
 
-# Nur die Kanäle 0..11 des Mini Maestro 24 können analog messen; 12..23
+# Nur die Kanäle 0..11 eines Mini Maestro können analog messen; 12..23
 # sind reine Digital-Ein-/Ausgänge und liefern nur 0 oder 1023.
 MAX_ANALOG_CHANNEL = 11
 
-# Kleinste noch brauchbare Spanne zwischen "kein Kontakt" und "Kontakt".
+# Kleinste noch brauchbare Spanne zwischen "unbelastet" und "Anschlag".
 # Darunter ist das Nutzsignal im Rauschen des Hall-Sensors untergegangen.
 MIN_CALIBRATION_SPAN = 15.0
 
@@ -215,16 +234,8 @@ class FootSensorCalibration(StrictBase):
     nicht in die Sensor-Kalibrierung.
     """
 
-    raw_unloaded: float = Field(
-        ge=0.0,
-        le=ANALOG_MAX,
-        description="Rohwert bei ganz ausgefahrener Schubstange (keine Last).",
-    )
-    raw_full: float = Field(
-        ge=0.0,
-        le=ANALOG_MAX,
-        description="Rohwert bei ganz eingedrückter Schubstange (Anschlag).",
-    )
+    raw_unloaded: float = Field(ge=0.0, le=ANALOG_MAX)
+    raw_full: float = Field(ge=0.0, le=ANALOG_MAX)
 
     @model_validator(mode="after")
     def _validate_span(self) -> FootSensorCalibration:
@@ -248,49 +259,30 @@ class FootSensorCalibration(StrictBase):
         return abs(self.span) / 100.0
 
     def level(self, raw: float) -> float:
-        """Rohwert → normierter Federweg, hart auf [0, 1] begrenzt.
-
-        Über den Anschlag hinaus geht es mechanisch nicht, unter die
-        entspannte Feder auch nicht — Werte außerhalb sind Rauschen.
-        """
+        """Rohwert → normierter Federweg, hart auf [0, 1] begrenzt."""
         value = (raw - self.raw_unloaded) / self.span
         return min(1.0, max(0.0, value))
 
 
 class FootSensorConfig(StrictBase):
-    """Ein Fußsensor an einem Analogeingang des Maestro."""
+    """Ein Fußsensor an einem Analogeingang eines Maestro-Busses."""
 
     leg: str = Field(min_length=1)
-    channel: int = Field(
-        ge=0,
-        le=MAX_ANALOG_CHANNEL,
-        description=(
-            "Maestro-Kanal, in der Maestro Control Center als 'Input' "
-            "konfiguriert. Nur 0..11 können analog messen."
-        ),
-    )
+    bus: str = Field(default=DEFAULT_BUS, min_length=1)
+    channel: int = Field(ge=0, le=MAX_ANALOG_CHANNEL)
     enabled: bool = Field(default=True)
-    calibration: FootSensorCalibration | None = Field(
-        default=None,
-        description="Fehlt sie, liefert der Sensor nur Rohwerte (keinen Pegel).",
-    )
+    calibration: FootSensorCalibration | None = Field(default=None)
+
+    @property
+    def address(self) -> tuple[str, int]:
+        return (self.bus, self.channel)
 
 
 class FootSensorsConfig(StrictBase):
     """Alle Fußsensoren. Leer = Roboter hat (noch) keine."""
 
-    poll_hz: float = Field(
-        default=50.0,
-        gt=0.0,
-        le=200.0,
-        description="Abtastrate für den Telemetrie-Thread.",
-    )
-    samples: int = Field(
-        default=3,
-        ge=1,
-        le=15,
-        description="Anzahl Einzelmessungen pro Abtastung (Median gegen Ausreißer).",
-    )
+    poll_hz: float = Field(default=50.0, gt=0.0, le=200.0)
+    samples: int = Field(default=3, ge=1, le=15)
     sensors: list[FootSensorConfig] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -299,11 +291,11 @@ class FootSensorsConfig(StrictBase):
         if len(set(legs)) != len(legs):
             duplicates = {leg for leg in legs if legs.count(leg) > 1}
             raise ValueError(f"Pro Bein nur ein Fußsensor. Doppelt: {sorted(duplicates)}")
-        channels = [s.channel for s in self.sensors]
-        if len(set(channels)) != len(channels):
-            duplicates_ch = {c for c in channels if channels.count(c) > 1}
+        addresses = [s.address for s in self.sensors]
+        if len(set(addresses)) != len(addresses):
+            dups = {a for a in addresses if addresses.count(a) > 1}
             raise ValueError(
-                f"Fußsensor-Kanäle müssen eindeutig sein. Doppelt: {sorted(duplicates_ch)}"
+                f"Fußsensor-Kanäle müssen je Bus eindeutig sein. Doppelt: {sorted(dups)}"
             )
         return self
 
@@ -318,54 +310,76 @@ class FootSensorsConfig(StrictBase):
         """Nur die eingeschalteten Sensoren."""
         return [s for s in self.sensors if s.enabled]
 
+    @property
+    def active_buses(self) -> list[str]:
+        """Busse, auf denen aktive Sensoren liegen — in Konfig-Reihenfolge."""
+        seen: list[str] = []
+        for sensor in self.active:
+            if sensor.bus not in seen:
+                seen.append(sensor.bus)
+        return seen
+
 
 class RobotConfig(StrictBase):
     name: str = Field(default="Hexapod", min_length=1)
     description: str = ""
     servo_limits: ServoLimits = Field(default_factory=ServoLimits)
-    driver: DriverConfig = Field(default_factory=DriverConfig)
-    camera_driver: CameraDriverConfig | None = Field(default=None)
+    buses: dict[str, BusConfig] = Field(min_length=1)
     body: BodyConfig
     servos: list[ServoConfig] = Field(min_length=1)
     foot_sensors: FootSensorsConfig = Field(default_factory=FootSensorsConfig)
 
-    # ---- Bus-Zuordnung ----
+    # ---- Zugriff auf Busse ----
+
+    def get_bus(self, name: str) -> BusConfig:
+        try:
+            return self.buses[name]
+        except KeyError:
+            raise KeyError(
+                f"Unbekannter Bus {name!r}. Bekannt: {sorted(self.buses)}"
+            ) from None
+
+    def servos_on(self, bus_name: str) -> list[LegServoConfig | CameraServoConfig]:
+        """Alle Servos an einem Bus, in Konfigurationsreihenfolge."""
+        return [s for s in self.servos if s.bus == bus_name]
 
     @property
-    def camera_on_own_bus(self) -> bool:
-        """True, wenn die Kamera-Servos an einem eigenen Treiber hängen."""
-        return self.camera_driver is not None
-
-    @property
-    def main_bus_servos(self) -> list[LegServoConfig | CameraServoConfig]:
-        """Servos am Haupttreiber (Maestro)."""
-        if self.camera_on_own_bus:
-            return [s for s in self.servos if isinstance(s, LegServoConfig)]
-        return list(self.servos)
-
-    @property
-    def camera_bus_servos(self) -> list[CameraServoConfig]:
-        """Servos am Kamera-Treiber (leer, wenn es keinen gibt)."""
-        if not self.camera_on_own_bus:
-            return []
-        return [s for s in self.servos if isinstance(s, CameraServoConfig)]
+    def servo_buses(self) -> list[str]:
+        """Busse, an denen mindestens ein Servo hängt — in Konfig-Reihenfolge."""
+        seen: list[str] = []
+        for servo in self.servos:
+            if servo.bus not in seen:
+                seen.append(servo.bus)
+        return seen
 
     # ---- Validatoren ----
 
     @model_validator(mode="after")
-    def _validate_channel_uniqueness(self) -> RobotConfig:
-        """Kanäle müssen je Bus eindeutig sein (zwei Busse dürfen sich überlappen)."""
-        for bus_name, servos in (
-            ("Haupttreiber", self.main_bus_servos),
-            ("Kamera-Treiber", self.camera_bus_servos),
-        ):
-            channels = [s.channel for s in servos]
-            if len(set(channels)) != len(channels):
-                duplicates = {c for c in channels if channels.count(c) > 1}
+    def _validate_bus_references(self) -> RobotConfig:
+        for servo in self.servos:
+            if servo.bus not in self.buses:
                 raise ValueError(
-                    f"Servo-Kanäle am {bus_name} müssen eindeutig sein. "
-                    f"Doppelt: {sorted(duplicates)}"
+                    f"Servo auf Kanal {servo.channel} verweist auf unbekannten Bus "
+                    f"{servo.bus!r}. Bekannt: {sorted(self.buses)}"
                 )
+        for sensor in self.foot_sensors.sensors:
+            if sensor.bus not in self.buses:
+                raise ValueError(
+                    f"Fußsensor {sensor.leg} verweist auf unbekannten Bus "
+                    f"{sensor.bus!r}. Bekannt: {sorted(self.buses)}"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_channel_uniqueness(self) -> RobotConfig:
+        """Kanäle müssen je Bus eindeutig sein — über Busse hinweg dürfen sie sich
+        wiederholen, denn Kanal 3 auf 'left' ist eine andere Buchse als auf 'right'."""
+        addresses = [s.address for s in self.servos]
+        if len(set(addresses)) != len(addresses):
+            duplicates = {a for a in addresses if addresses.count(a) > 1}
+            raise ValueError(
+                f"Servo-Kanäle müssen je Bus eindeutig sein. Doppelt: {sorted(duplicates)}"
+            )
         return self
 
     @model_validator(mode="after")
@@ -395,21 +409,14 @@ class RobotConfig(StrictBase):
         return self
 
     @model_validator(mode="after")
-    def _validate_channels_within_driver(self) -> RobotConfig:
-        for s in self.main_bus_servos:
-            if s.channel >= self.driver.num_channels:
+    def _validate_channels_within_bus(self) -> RobotConfig:
+        for servo in self.servos:
+            bus = self.buses[servo.bus]
+            if servo.channel >= bus.num_channels:
                 raise ValueError(
-                    f"Servo-Kanal {s.channel} außerhalb der Driver-Kanäle "
-                    f"[0..{self.driver.num_channels - 1}]."
+                    f"Servo-Kanal {servo.channel} liegt außerhalb von Bus "
+                    f"{servo.bus!r} [0..{bus.num_channels - 1}]."
                 )
-        cam = self.camera_driver
-        if cam is not None:
-            for cs in self.camera_bus_servos:
-                if cs.channel >= cam.num_channels:
-                    raise ValueError(
-                        f"Kamera-Servo-Kanal {cs.channel} außerhalb der "
-                        f"Kamera-Treiber-Kanäle [0..{cam.num_channels - 1}]."
-                    )
         return self
 
     @model_validator(mode="after")
@@ -431,29 +438,36 @@ class RobotConfig(StrictBase):
 
     @model_validator(mode="after")
     def _validate_foot_sensors(self) -> RobotConfig:
-        """Fußsensoren: bekannte Beine, und kein Kanal, auf dem ein Servo hängt.
+        """Fußsensoren: bekannte Beine, analogfähiger Bus, und kein Kanal,
+        auf dem ein Servo hängt.
 
-        Das ist die wichtigste Prüfung überhaupt: Ein als Eingang
+        Letzteres ist die wichtigste Prüfung überhaupt: Ein als Eingang
         konfigurierter Kanal, auf dem trotzdem ein Servo steckt, bekommt
         keinen Puls mehr — das Bein fällt zusammen.
         """
         leg_names = {leg.name for leg in self.body.legs}
-        servo_channels = {s.channel for s in self.main_bus_servos}
+        servo_addresses = {s.address for s in self.servos}
         for sensor in self.foot_sensors.sensors:
             if sensor.leg not in leg_names:
                 raise ValueError(
                     f"Fußsensor auf Kanal {sensor.channel} referenziert unbekanntes "
                     f"Bein {sensor.leg}. Bekannte Beine: {sorted(leg_names)}"
                 )
-            if sensor.channel in servo_channels:
+            bus = self.buses[sensor.bus]
+            if bus.type not in ANALOG_CAPABLE_BUS_TYPES:
                 raise ValueError(
-                    f"Fußsensor-Kanal {sensor.channel} ({sensor.leg}) ist am "
-                    f"Haupttreiber bereits durch einen Servo belegt."
+                    f"Fußsensor {sensor.leg} liegt auf Bus {sensor.bus!r} vom Typ "
+                    f"{bus.type!r} — der hat keine Analogeingänge."
                 )
-            if sensor.channel >= self.driver.num_channels:
+            if sensor.address in servo_addresses:
                 raise ValueError(
-                    f"Fußsensor-Kanal {sensor.channel} außerhalb der Driver-Kanäle "
-                    f"[0..{self.driver.num_channels - 1}]."
+                    f"Fußsensor-Kanal {sensor.channel} auf Bus {sensor.bus!r} "
+                    f"({sensor.leg}) ist bereits durch einen Servo belegt."
+                )
+            if sensor.channel >= bus.num_channels:
+                raise ValueError(
+                    f"Fußsensor-Kanal {sensor.channel} liegt außerhalb von Bus "
+                    f"{sensor.bus!r} [0..{bus.num_channels - 1}]."
                 )
         return self
 

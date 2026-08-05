@@ -55,9 +55,8 @@ def run_trim(config: Path, do_power_up: bool = False) -> None:
                 {leg: (CALIB_X, 0.0, 0.0) for leg in legs}, clip=True
             )
             time.sleep(2)
-            n = robot._config.driver.num_channels
-            robot._driver.set_speed_all(n, 0)
-            robot._driver.set_acceleration_all(n, 0)
+            robot.set_speed_all(0)
+            robot.set_acceleration_all(0)
             time.sleep(0.3)
             console.print("Aufstehen...")
             power_up(robot)

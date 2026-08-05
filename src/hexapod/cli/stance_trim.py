@@ -27,7 +27,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from hexapod.config.model import Joint
+from hexapod.config.model import Joint, LegServoConfig
 from hexapod.kinematics.leg_ik import forward_kinematics
 from hexapod.robot.hexapod import Hexapod
 from hexapod.servo_mapper.mapper import MAX_ANGLE_RAD
@@ -40,10 +40,10 @@ JOINTS = (Joint.COXA, Joint.FEMUR, Joint.TIBIA)
 JOINT_KEYS = {"c": 0, "f": 1, "t": 2}
 
 
-def _patch_yaml(config_path: Path, channel: int, center_us: float) -> None:
+def _patch_yaml(config_path: Path, bus: str, channel: int, center_us: float) -> None:
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     for servo in raw.get("servos", []):
-        if servo.get("channel") == channel:
+        if servo.get("channel") == channel and servo.get("bus", "main") == bus:
             servo["center_us"] = round(center_us, 1)
             break
     config_path.write_text(
@@ -57,34 +57,39 @@ def run_stance_trim(config: Path, simulator: bool = False, do_power_up: bool = F
 
     cfg = load_robot_config(config)
     if simulator:
-        cfg = cfg.model_copy(
-            update={"driver": cfg.driver.model_copy(update={"type": "simulator"})}
-        )
+        cfg = cfg.model_validate({
+            **cfg.model_dump(),
+            "buses": {
+                n: {"type": "simulator", "num_channels": b.num_channels}
+                for n, b in cfg.buses.items()
+            },
+        })
     robot = Hexapod(cfg)
     legs = robot._leg_names
     leg_idx = 0
     joint_idx = 0
 
     # Kanal + Original-Mapping je (Bein, Gelenk); Stance-Winkel je Bein.
-    chan = {
-        (leg, j): robot._config.get_leg_servo(leg, j).channel
+    # Adressiert wird ueber (Bus, Kanal): mit zwei Controllern ist die
+    # Kanalnummer allein nicht mehr eindeutig.
+    servo_of = {
+        (leg, j): robot._config.get_leg_servo(leg, j)
         for leg in legs for j in JOINTS
     }
     stance_angles = {leg: robot.offset_to_angles(leg, 0.0, 0.0, 0.0) for leg in legs}
-    delta: dict[int, float] = {chan[k]: 0.0 for k in chan}
+    delta: dict[tuple[str, int], float] = {s.address: 0.0 for s in servo_of.values()}
 
-    def k_per_us(ch: int) -> float:
-        m = robot._mappings[ch]
-        return m.range_us / MAX_ANGLE_RAD  # µs pro rad
+    def k_per_us(sv: LegServoConfig) -> float:
+        return robot.mapping_for(sv).range_us / MAX_ANGLE_RAD  # µs pro rad
 
     def send(leg: str) -> None:
         for ji, j in enumerate(JOINTS):
-            ch = chan[(leg, j)]
-            m = robot._mappings[ch]
+            sv = servo_of[(leg, j)]
+            m = robot.mapping_for(sv)
             ang = stance_angles[leg][ji]
-            us = m.center_us + delta[ch] + m.direction * ang * k_per_us(ch)
+            us = m.center_us + delta[sv.address] + m.direction * ang * k_per_us(sv)
             us = max(m.min_us, min(m.max_us, us))
-            robot.set_servo_us(ch, us)
+            robot.set_servo_us(sv.bus, sv.channel, us)
 
     def foot_shift_mm(leg: str) -> tuple[float, float, float]:
         """Fuss-Verschiebung ggue. nominaler Stance: (radial, tangential, hoehe)."""
@@ -93,10 +98,12 @@ def run_stance_trim(config: Path, simulator: bool = False, do_power_up: bool = F
         # effektive Winkel unter ORIGINAL-Mapping aus den gesendeten Pulsen
         ang_eff = []
         for ji, j in enumerate(JOINTS):
-            ch = chan[(leg, j)]
-            m = robot._mappings[ch]
+            sv = servo_of[(leg, j)]
+            m = robot.mapping_for(sv)
             ang = stance_angles[leg][ji]
-            ang_eff.append(ang + delta[ch] / (m.direction * k_per_us(ch)))
+            ang_eff.append(
+                ang + delta[sv.address] / (m.direction * k_per_us(sv))
+            )
         lx, ly, lz = forward_kinematics(
             ang_eff[0], ang_eff[1], ang_eff[2], robot.leg_lengths
         )
@@ -122,12 +129,12 @@ def run_stance_trim(config: Path, simulator: bool = False, do_power_up: bool = F
         t.add_column("center_us", justify="right")
         t.add_column("Δ µs", justify="right")
         for ji, j in enumerate(JOINTS):
-            ch = chan[(leg, j)]
-            m = robot._mappings[ch]
+            sv = servo_of[(leg, j)]
+            m = robot.mapping_for(sv)
             sel = "▶ " if ji == joint_idx else "  "
-            d = delta[ch]
+            d = delta[sv.address]
             t.add_row(
-                f"{sel}{j.value}", str(ch),
+                f"{sel}{j.value}", f"{sv.bus}/{sv.channel}",
                 f"{m.center_us + d:.1f}",
                 f"[yellow]{d:+.1f}[/yellow]" if abs(d) > 0.05 else "[dim]0[/dim]",
             )
@@ -149,12 +156,11 @@ def run_stance_trim(config: Path, simulator: bool = False, do_power_up: bool = F
             console.print(f"\n{msg}")
 
     try:
-        n = robot._config.driver.num_channels
         # Gedaempfte Servo-Geschwindigkeit: erstes Anfahren der Stance und jeder
         # Trim-Schritt laeuft sanft statt ruckartig.
         try:
-            robot._driver.set_speed_all(n, 25)
-            robot._driver.set_acceleration_all(n, 4)
+            robot.set_speed_all(25)
+            robot.set_acceleration_all(4)
         except Exception:
             pass
         if do_power_up:
@@ -176,8 +182,9 @@ def run_stance_trim(config: Path, simulator: bool = False, do_power_up: bool = F
         while True:
             key = readchar.readkey()
             leg = legs[leg_idx]
-            ch = chan[(leg, JOINTS[joint_idx])]
-            m = robot._mappings[ch]
+            sv = servo_of[(leg, JOINTS[joint_idx])]
+            addr = sv.address
+            m = robot.mapping_for(sv)
             lo, hi = m.min_us - m.center_us, m.max_us - m.center_us
             if key in JOINT_KEYS:
                 joint_idx = JOINT_KEYS[key]
@@ -188,25 +195,28 @@ def run_stance_trim(config: Path, simulator: bool = False, do_power_up: bool = F
             elif key in tuple("123456")[: len(legs)]:
                 leg_idx = int(key) - 1
             elif key == readchar.key.RIGHT:
-                delta[ch] = min(hi, delta[ch] + STEP_SMALL)
+                delta[addr] = min(hi, delta[addr] + STEP_SMALL)
                 send(leg)
             elif key == readchar.key.LEFT:
-                delta[ch] = max(lo, delta[ch] - STEP_SMALL)
+                delta[addr] = max(lo, delta[addr] - STEP_SMALL)
                 send(leg)
             elif key == readchar.key.UP:
-                delta[ch] = min(hi, delta[ch] + STEP_LARGE)
+                delta[addr] = min(hi, delta[addr] + STEP_LARGE)
                 send(leg)
             elif key == readchar.key.DOWN:
-                delta[ch] = max(lo, delta[ch] - STEP_LARGE)
+                delta[addr] = max(lo, delta[addr] - STEP_LARGE)
                 send(leg)
             elif key in ("r", "R"):
-                delta[ch] = 0.0
+                delta[addr] = 0.0
                 send(leg)
             elif key in ("s", "S"):
-                changed = {c: robot._mappings[c].center_us + d
-                           for c, d in delta.items() if abs(d) > 0.05}
-                for c, newc in sorted(changed.items()):
-                    _patch_yaml(config, c, newc)
+                changed = {
+                    sv.address: robot.mapping_for(sv).center_us + delta[sv.address]
+                    for sv in servo_of.values()
+                    if abs(delta[sv.address]) > 0.05
+                }
+                for (b, c), newc in sorted(changed.items()):
+                    _patch_yaml(config, b, c, newc)
                 render(f"[green]✓ {len(changed)} Kanal/Kanaele gespeichert.[/green]"
                        if changed else "[yellow]Keine Aenderung.[/yellow]")
                 readchar.readkey()

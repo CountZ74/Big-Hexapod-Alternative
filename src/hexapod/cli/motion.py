@@ -53,9 +53,8 @@ def cmd_power_up(config: Path, confirm: bool) -> None:
         )
         time.sleep(2)
         # Freie Speed (Executor begrenzt selbst), dann Aufstehsequenz.
-        n = robot._config.driver.num_channels
-        robot._driver.set_speed_all(n, 0)
-        robot._driver.set_acceleration_all(n, 0)
+        robot.set_speed_all(0)
+        robot.set_acceleration_all(0)
         time.sleep(0.3)
         typer.echo("Aufstehen...")
         power_up(robot)

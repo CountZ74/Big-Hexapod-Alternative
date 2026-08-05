@@ -191,17 +191,28 @@ class RobotWorker:
         config = load_robot_config(self._config_path)
         # Dev-Override: HEXAPOD_DRIVER=simulator erlaubt gefahrloses Testen.
         override = os.environ.get("HEXAPOD_DRIVER")
-        if override:
+        if override == "simulator":
             data = config.model_dump()
-            data["driver"] = {"type": override, "num_channels": config.driver.num_channels}
+            # Alle Busse gleichzeitig simulieren — sonst wuerde der Roboter
+            # halb echte Hardware ansprechen.
+            data["buses"] = {
+                name: {"type": "simulator", "num_channels": bus.num_channels}
+                for name, bus in config.buses.items()
+            }
             config = config.model_validate(data)
+        elif override:
+            logger.warning(
+                "HEXAPOD_DRIVER=%r wird ignoriert (unterstuetzt: 'simulator')", override
+            )
         return Hexapod(config)
 
     def _run(self) -> None:
         logger.info("Worker startet, oeffne Roboter aus %s", self._config_path)
         self._robot = self._open_robot()
         self._robot_name = self._robot.config.name
-        self._driver_type = self._robot.config.driver.type
+        self._driver_type = ",".join(
+            f"{name}={bus.type}" for name, bus in self._robot.config.buses.items()
+        )
         self._num_legs = len(self._robot.leg_names)
         self._motion = MotionController(self._robot)
         self._camera = CameraThread(self._robot)
@@ -520,9 +531,10 @@ class RobotWorker:
         ok = True
         for name in robot.leg_names:
             try:
-                chs = [robot.config.get_leg_servo(name, j).channel for j in _JOINTS]
-                us = [raw.get(c, {}).get("us") for c in chs]
-                a0, a1, a2 = (raw.get(c, {}).get("angle_rad") for c in chs)
+                svs = [robot.config.get_leg_servo(name, j) for j in _JOINTS]
+                keys = [f"{s.bus}:{s.channel}" for s in svs]
+                us = [raw.get(k, {}).get("us") for k in keys]
+                a0, a1, a2 = (raw.get(k, {}).get("angle_rad") for k in keys)
                 if a0 is None or a1 is None or a2 is None:
                     ok = False
                     legs.append(LegTelemetry(

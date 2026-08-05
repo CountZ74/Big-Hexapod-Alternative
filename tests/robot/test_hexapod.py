@@ -27,28 +27,29 @@ class TestLifecycle:
 
     def test_context_manager_closes(self, sim_hexapod: Hexapod) -> None:
         with sim_hexapod as robot:
-            assert not robot.driver.is_closed
-        assert robot.driver.is_closed
+            assert not any(d.is_closed for d in robot.drivers.values())
+        assert all(d.is_closed for d in robot.drivers.values())
 
-    def test_close_disables_all_servos(self, sim_hexapod: Hexapod) -> None:
-        driver = sim_hexapod.driver
+    def test_close_disables_all_servos(self, sim_hexapod: Hexapod, leg_bus: str) -> None:
+        driver = sim_hexapod.bus_driver(leg_bus)
         assert isinstance(driver, SimulatorDriver)
-        sim_hexapod.set_servo_us(0, 1500.0)
+        sim_hexapod.set_servo_us(leg_bus, 1, 1500.0)
         sim_hexapod.close()
-        assert driver.snapshot()[0] == 0.0
+        assert driver.snapshot()[1] == 0.0
 
 
 class TestHome:
     def test_home_sets_all_channels(self, sim_hexapod: Hexapod) -> None:
-        driver = sim_hexapod.driver
-        assert isinstance(driver, SimulatorDriver)
         sim_hexapod.home()
-        snap = driver.snapshot()
-        # Kanalnummern aus der Konfig lesen statt anzunehmen, dass die
-        # Beinservos bei 0 beginnen — sie liegen jetzt auf 6..23.
-        for servo in sim_hexapod.config.main_bus_servos:
-            ch = servo.channel
-            assert snap[ch] == pytest.approx(servo.center_us), f"Kanal {ch} falsch"
+        # Jeder Servo wird auf SEINEM Bus geprueft: Kanalnummern wiederholen
+        # sich ueber Busse hinweg, eine flache Tabelle waere mehrdeutig.
+        snaps = {b: d.snapshot() for b, d in sim_hexapod.drivers.items()}
+        for servo in sim_hexapod.config.servos:
+            if servo.kind != "leg":
+                continue  # home() bewegt nur die Beine
+            got = snaps[servo.bus][servo.channel]
+            assert got == pytest.approx(servo.center_us), \
+                f"{servo.bus}/{servo.channel} falsch"
 
     def test_home_updates_leg_state(self, sim_hexapod: Hexapod) -> None:
         sim_hexapod.home()
@@ -61,22 +62,22 @@ class TestHome:
 
 class TestSetLegAngles:
     def test_zero_angles_give_center_us(self, sim_hexapod: Hexapod) -> None:
-        driver = sim_hexapod.driver
-        assert isinstance(driver, SimulatorDriver)
         sim_hexapod.set_leg_angles("front_right", 0.0, 0.0, 0.0)
-        snap = driver.snapshot()
         for joint in [Joint.COXA, Joint.FEMUR, Joint.TIBIA]:
             servo = sim_hexapod.config.get_leg_servo("front_right", joint)
-            assert snap[servo.channel] == pytest.approx(servo.center_us)
+            driver = sim_hexapod.bus_driver(servo.bus)
+            assert isinstance(driver, SimulatorDriver)
+            assert driver.snapshot()[servo.channel] == pytest.approx(servo.center_us)
 
     def test_other_legs_unaffected(self, sim_hexapod: Hexapod) -> None:
-        driver = sim_hexapod.driver
-        assert isinstance(driver, SimulatorDriver)
         sim_hexapod.set_leg_angles("front_right", 0.0, 0.0, 0.0)
-        snap = driver.snapshot()
-        assert snap[3] == 0.0
-        assert snap[4] == 0.0
-        assert snap[5] == 0.0
+        # Alle Servos, die nicht zu front_right gehoeren, sind unberuehrt (0.0).
+        snaps = {b: d.snapshot() for b, d in sim_hexapod.drivers.items()}
+        for servo in sim_hexapod.config.servos:
+            if getattr(servo, "leg", None) == "front_right":
+                continue
+            assert snaps[servo.bus][servo.channel] == 0.0, \
+                f"{servo.bus}/{servo.channel} haette unberuehrt bleiben muessen"
 
     def test_updates_leg_state_angles(self, sim_hexapod: Hexapod) -> None:
         t1, t2, t3 = math.radians(10), math.radians(20), math.radians(30)
@@ -152,24 +153,29 @@ class TestSetAllFootPositions:
 
 
 class TestDirectServoControl:
-    def test_set_and_get_servo_us(self, sim_hexapod: Hexapod) -> None:
-        sim_hexapod.set_servo_us(0, 1600.0)
-        assert sim_hexapod.get_servo_us(0) == pytest.approx(1600.0)
+    def test_set_and_get_servo_us(self, sim_hexapod: Hexapod, leg_bus: str) -> None:
+        sim_hexapod.set_servo_us(leg_bus, 1, 1600.0)
+        assert sim_hexapod.get_servo_us(leg_bus, 1) == pytest.approx(1600.0)
+
+    def test_unbekannter_bus_wirft(self, sim_hexapod: Hexapod) -> None:
+        with pytest.raises(KeyError, match="gibt_es_nicht"):
+            sim_hexapod.set_servo_us("gibt_es_nicht", 0, 1500.0)
 
     def test_disable_all(self, sim_hexapod: Hexapod) -> None:
-        driver = sim_hexapod.driver
-        assert isinstance(driver, SimulatorDriver)
         sim_hexapod.home()
         sim_hexapod.disable_all()
-        snap = driver.snapshot()
-        for servo in sim_hexapod.config.main_bus_servos:
-            assert snap[servo.channel] == 0.0, f"Kanal {servo.channel} sollte 0 sein"
+        snaps = {b: d.snapshot() for b, d in sim_hexapod.drivers.items()}
+        for servo in sim_hexapod.config.servos:
+            got = snaps[servo.bus][servo.channel]
+            assert got == 0.0, f"{servo.bus}/{servo.channel} sollte 0 sein"
 
 
 class TestCamera:
     def test_set_camera_pan_tilt(self, sim_hexapod: Hexapod) -> None:
         # Kamera-Servos haengen am eigenen Bus (PCA9685), nicht am Maestro.
-        driver = sim_hexapod.camera_driver or sim_hexapod.driver
+        driver = sim_hexapod.bus_driver(
+            sim_hexapod.config.get_camera_servo(CameraAxis.PAN).bus
+        )
         assert isinstance(driver, SimulatorDriver)
         sim_hexapod.set_camera(pan_deg=0.0, tilt_deg=0.0)
         snap = driver.snapshot()
@@ -179,7 +185,9 @@ class TestCamera:
         assert snap[tilt.channel] == pytest.approx(tilt.center_us)
 
     def test_camera_pan_positive(self, sim_hexapod: Hexapod) -> None:
-        driver = sim_hexapod.camera_driver or sim_hexapod.driver
+        driver = sim_hexapod.bus_driver(
+            sim_hexapod.config.get_camera_servo(CameraAxis.PAN).bus
+        )
         assert isinstance(driver, SimulatorDriver)
         sim_hexapod.set_camera(pan_deg=45.0, tilt_deg=0.0)
         snap = driver.snapshot()

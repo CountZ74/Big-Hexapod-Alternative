@@ -1,0 +1,26 @@
+# Pololu Mini Maestro Servo Controller (idVendor=1ffb)
+#
+#   idProduct 008c = Mini Maestro 24-Channel -> LINKE Koerperseite
+#   idProduct 008a = Mini Maestro 12-Channel -> RECHTE Koerperseite
+#
+# Die beiden Boards sind verschiedene Modelle, deshalb genuegt die Produkt-ID
+# zur Unterscheidung -- Seriennummern sind nicht noetig. Zur Info, falls doch
+# einmal zwei gleiche Boards verbaut werden: 24CH = 00231960, 12CH = 00509353,
+# dann zusaetzlich auf ATTRS{serial} matchen.
+#
+# Ohne diese Regeln entscheidet die Einschaltreihenfolge, welches Board
+# welches /dev/ttyACM* bekommt -- bei 18 Servos keine gute Idee.
+#
+# Installation:
+#   sudo cp deploy/99-maestro.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger
+
+# Zugriff ohne root (der Dienst laeuft als 'sebi')
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1ffb", MODE="0666"
+
+# Interface 00 = Command Port (Befehle), 02 = TTL Port
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1ffb", ENV{ID_MODEL_ID}=="008c", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="maestro_left_cmd"
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1ffb", ENV{ID_MODEL_ID}=="008c", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="maestro_left_ttl"
+
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1ffb", ENV{ID_MODEL_ID}=="008a", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="maestro_right_cmd"
+SUBSYSTEM=="tty", ENV{ID_VENDOR_ID}=="1ffb", ENV{ID_MODEL_ID}=="008a", ENV{ID_USB_INTERFACE_NUM}=="02", SYMLINK+="maestro_right_ttl"

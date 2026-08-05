@@ -9,7 +9,7 @@ from hexapod.config import (
     BodyConfig,
     CameraAxis,
     CameraServoConfig,
-    DriverConfig,
+    MaestroBus,
     Joint,
     LegConfig,
     LegGeometry,
@@ -25,28 +25,28 @@ from hexapod.config import (
 # ============================================================
 
 
-class TestDriverConfig:
+class TestMaestroBus:
     def test_defaults(self) -> None:
-        d = DriverConfig()
+        d = MaestroBus()
         assert d.type == "maestro"
         assert d.port == "/dev/maestro_cmd"
         assert d.num_channels == 24
 
     def test_rejects_unknown_type(self) -> None:
         with pytest.raises(ValidationError):
-            DriverConfig(type="something_else")  # type: ignore[arg-type]
+            MaestroBus(type="something_else")  # type: ignore[arg-type]
 
     def test_rejects_zero_channels(self) -> None:
         with pytest.raises(ValidationError):
-            DriverConfig(num_channels=0)
+            MaestroBus(num_channels=0)
 
     def test_rejects_negative_timeout(self) -> None:
         with pytest.raises(ValidationError):
-            DriverConfig(timeout=-1.0)
+            MaestroBus(timeout=-1.0)
 
     def test_rejects_extra_fields(self) -> None:
         with pytest.raises(ValidationError, match="extra"):
-            DriverConfig(typo_field="oops")  # type: ignore[call-arg]
+            MaestroBus(typo_field="oops")  # type: ignore[call-arg]
 
 
 class TestLegGeometry:
@@ -219,10 +219,10 @@ class TestRobotConfig:
         with pytest.raises(ValidationError, match="fehlen Servos"):
             RobotConfig.model_validate(data)
 
-    def test_rejects_channel_beyond_driver_range(self, minimal_config: RobotConfig) -> None:
+    def test_rejects_channel_beyond_bus_range(self, minimal_config: RobotConfig) -> None:
         data = minimal_config.model_dump()
-        data["driver"]["num_channels"] = 12
-        with pytest.raises(ValidationError, match="außerhalb der Driver"):
+        data["buses"]["main"]["num_channels"] = 12
+        with pytest.raises(ValidationError, match="liegt außerhalb von Bus"):
             RobotConfig.model_validate(data)
 
 

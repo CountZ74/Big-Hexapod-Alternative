@@ -57,30 +57,45 @@ ReadOnlyDriver = MaestroDriver | SimulatorDriver
 # ---------------------------------------------------------------------
 
 
-def _open_driver(config: RobotConfig, *, simulator: bool) -> ReadOnlyDriver:
-    """Öffnet einen rein lesenden Treiber.
+def _open_drivers(
+    config: RobotConfig, *, simulator: bool
+) -> dict[str, ReadOnlyDriver]:
+    """Öffnet je Sensor-Bus einen rein lesenden Treiber.
+
+    Die Fußsensoren sitzen lokal am Controller ihrer Körperseite, es sind
+    also mehrere Busse im Spiel.
 
     `initial_speed=None` und `initial_acceleration=None` sind hier der Kern
     der Sicherheit: der MaestroDriver schreibt dann beim Öffnen kein einziges
     Byte auf die Servokanäle.
     """
-    if simulator or config.driver.type == "simulator":
-        return SimulatorDriver(num_channels=config.driver.num_channels)
-    return MaestroDriver(
-        port=config.driver.port,
-        num_channels=config.driver.num_channels,
-        timeout=config.driver.timeout,
-        min_pulse_us=config.servo_limits.absolute_min_us,
-        max_pulse_us=config.servo_limits.absolute_max_us,
-        initial_speed=None,
-        initial_acceleration=None,
-    )
+    drivers: dict[str, ReadOnlyDriver] = {}
+    for name in config.foot_sensors.active_buses:
+        bus = config.get_bus(name)
+        if simulator or bus.type == "simulator":
+            drivers[name] = SimulatorDriver(num_channels=bus.num_channels)
+        elif bus.type == "maestro":
+            drivers[name] = MaestroDriver(
+                port=bus.port,
+                num_channels=bus.num_channels,
+                timeout=bus.timeout,
+                min_pulse_us=config.servo_limits.absolute_min_us,
+                max_pulse_us=config.servo_limits.absolute_max_us,
+                initial_speed=None,
+                initial_acceleration=None,
+            )
+        else:
+            raise typer.BadParameter(
+                f"Bus {name!r} vom Typ {bus.type!r} hat keine Analogeingänge."
+            )
+    return drivers
 
 
-def _close(driver: ReadOnlyDriver) -> None:
+def _close(drivers: dict[str, ReadOnlyDriver]) -> None:
     # disable=False: keinen einzigen Kanal abschalten — der Roboter soll
     # seine Pose behalten, auch wenn er gerade steht.
-    driver.close(disable=False)
+    for driver in drivers.values():
+        driver.close(disable=False)
 
 
 def _load(config_path: Path) -> RobotConfig:
@@ -196,8 +211,8 @@ def run_foot_monitor(
 ) -> None:
     """Live-Ansicht aller Fußsensoren mit Min/Max-Gedächtnis, bis Strg-C."""
     config = _load(config_path)
-    driver = _open_driver(config, simulator=simulator)
-    sensors = FootSensorArray(driver, config.foot_sensors)
+    drivers = _open_drivers(config, simulator=simulator)
+    sensors = FootSensorArray(drivers, config.foot_sensors)
     peaks = _PeakHold()
     period = 1.0 / max(0.5, rate_hz)
     _hinweis()
@@ -210,7 +225,7 @@ def run_foot_monitor(
     except KeyboardInterrupt:
         console.print("\nBeendet.")
     finally:
-        _close(driver)
+        _close(drivers)
 
 
 # ---------------------------------------------------------------------
@@ -240,7 +255,7 @@ def run_foot_calibration(
     )
     _hinweis()
 
-    driver = _open_driver(config, simulator=simulator)
+    drivers = _open_drivers(config, simulator=simulator)
     results: dict[str, FootSensorCalibration] = {}
 
     try:
@@ -257,12 +272,14 @@ def run_foot_calibration(
             if answer == "s":
                 continue
 
-            calib = _calibrate_one(driver, sensor.channel, sensor.leg)
+            calib = _calibrate_one(
+                drivers[sensor.bus], sensor.channel, sensor.leg
+            )
             if calib is None:
                 continue
             results[sensor.leg] = calib
 
-            _live_check(driver, config, sensor.leg, calib)
+            _live_check(drivers, config, sensor.leg, calib)
 
         if not results:
             console.print("\nNichts gemessen, nichts gespeichert.")
@@ -295,7 +312,7 @@ def run_foot_calibration(
         else:
             console.print("Nicht gespeichert.")
     finally:
-        _close(driver)
+        _close(drivers)
 
 
 def _calibrate_one(
@@ -369,7 +386,7 @@ def _calibrate_one(
 
 
 def _live_check(
-    driver: ReadOnlyDriver,
+    drivers: dict[str, ReadOnlyDriver],
     config: RobotConfig,
     leg: str,
     calib: FootSensorCalibration,
@@ -391,7 +408,7 @@ def _live_check(
             ]
         }
     )
-    sensors = FootSensorArray(driver, patched)
+    sensors = FootSensorArray(drivers, patched)
     peaks = _PeakHold()
     try:
         with Live(console=console, refresh_per_second=12) as live:

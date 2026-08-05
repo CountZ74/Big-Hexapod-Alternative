@@ -134,8 +134,7 @@ class MotionController:
         except Exception:
             return False
         for joint, ang in zip(self._JOINTS, angles, strict=True):
-            ch = r.config.get_leg_servo(leg, joint).channel
-            mp = r._mappings[ch]
+            mp = r.mapping_for(r.config.get_leg_servo(leg, joint))
             us = mp.angle_to_us(ang, clip=True)
             if us <= mp.min_us + margin_us or us >= mp.max_us - margin_us:
                 return False
