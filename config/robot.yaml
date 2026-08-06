@@ -31,42 +31,42 @@ body:
     mount_x: 75.0
     mount_y: -55.0
     mount_angle_deg: -36.3
-    z_trim: 0.0
+    z_trim: 2.77
   - name: front_left
     side: left
     row: front
     mount_x: 75.0
     mount_y: 55.0
     mount_angle_deg: 36.3
-    z_trim: 0.0
+    z_trim: -3.34
   - name: mid_right
     side: right
     row: mid
     mount_x: 0.0
     mount_y: -85.0
     mount_angle_deg: -90.0
-    z_trim: 0.0
+    z_trim: 3.68
   - name: mid_left
     side: left
     row: mid
     mount_x: 0.0
     mount_y: 85.0
     mount_angle_deg: 90.0
-    z_trim: 0.0
+    z_trim: -0.77
   - name: back_right
     side: right
     row: back
     mount_x: -75.0
     mount_y: -55.0
     mount_angle_deg: -143.7
-    z_trim: 0.0
+    z_trim: 0.19
   - name: back_left
     side: left
     row: back
     mount_x: -75.0
     mount_y: 55.0
     mount_angle_deg: 143.7
-    z_trim: 0.0
+    z_trim: -2.52
 servos:
 - kind: leg
   leg: back_left

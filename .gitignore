@@ -33,3 +33,4 @@ __pycache__/
 
 # Android-App (eigenes Projekt)
 hexapod_android/
+logs/

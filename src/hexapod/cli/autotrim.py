@@ -21,8 +21,10 @@ IMU-Anteil auf einer waagerechten Fläche.
 
 from __future__ import annotations
 
+import json
 import statistics
 import time
+from datetime import datetime
 from pathlib import Path
 
 import typer
@@ -48,6 +50,10 @@ MEASURE_S = 2.0
 MEASURE_INTERVAL = 0.05
 # Groesser als das darf z_trim nie werden (auch das Modell begrenzt auf 30).
 MAX_Z_TRIM_MM = 25.0
+# Rundenprotokoll. Ohne das verschwinden die Messwerte im Terminal -- und
+# genau die braucht man, um hinterher zu beurteilen, ob eine Korrektur
+# ueberhaupt gewirkt hat.
+LOG_PATH = Path("logs/autotrim.jsonl")
 
 
 def _measure(sensors: FootSensorArray) -> dict[str, float]:
@@ -80,19 +86,28 @@ def _read_tilt(robot: Hexapod) -> tuple[float, float] | None:
 
 
 def _report(runde: int, result: BalanceResult, tilt: tuple[float, float] | None,
-            korrektur: dict[str, float], travel_mm: float) -> None:
+            korrektur: dict[str, float], travel_mm: float,
+            vorrunde: dict[str, float] | None = None) -> None:
     table = Table(title=f"Runde {runde}   (Vollweg {travel_mm:.2f} mm)")
     table.add_column("Bein")
     table.add_column("Federweg", justify="right")
+    if vorrunde is not None:
+        # Wieviel hat sich seit der letzten Runde bewegt? Das ist die
+        # Wiederholbarkeit -- und damit die Grenze dessen, was das
+        # Verfahren ueberhaupt aufloesen kann.
+        table.add_column("Δ Vorrunde", justify="right")
     table.add_column("Residuum", justify="right")
     table.add_column("Δ z_trim", justify="right")
     for leg in sorted(result.residuals, key=lambda k: -result.residuals[k]):
-        table.add_row(
-            leg,
-            f"{result.levels[leg] * 100:5.1f} %",
+        zeile = [leg, f"{result.levels[leg] * 100:5.1f} %"]
+        if vorrunde is not None:
+            d = (result.levels[leg] - vorrunde.get(leg, result.levels[leg])) * 100
+            zeile.append(f"{d:+5.1f} %")
+        zeile += [
             f"{result.residuals[leg] * 100:+5.1f} %",
             f"{korrektur.get(leg, 0.0):+6.2f} mm",
-        )
+        ]
+        table.add_row(*zeile)
     console.print(table)
     z0, a, b = result.plane
     console.print(
@@ -101,6 +116,34 @@ def _report(runde: int, result: BalanceResult, tilt: tuple[float, float] | None,
     )
     if tilt is not None:
         console.print(f"[dim]IMU: Roll {tilt[0]:+.2f}°, Nick {tilt[1]:+.2f}°[/dim]")
+
+
+def _log(lauf_id: str, runde: int, result: BalanceResult,
+         tilt: tuple[float, float] | None, korrektur: dict[str, float],
+         travel_mm: float, robot: Hexapod) -> None:
+    """Eine Zeile je Runde als JSON wegschreiben.
+
+    Bewusst maschinenlesbar und anhaengend: so bleibt die Historie mehrerer
+    Trimmlaeufe erhalten und laesst sich hinterher auswerten.
+    """
+    eintrag = {
+        "lauf": lauf_id,
+        "zeit": datetime.now().isoformat(timespec="seconds"),
+        "runde": runde,
+        "travel_mm": round(travel_mm, 3),
+        "levels": {k: round(v, 5) for k, v in result.levels.items()},
+        "residuen": {k: round(v, 5) for k, v in result.residuals.items()},
+        "ebene": [round(v, 6) for v in result.plane],
+        "tilt_deg": [round(v, 3) for v in tilt] if tilt else None,
+        "korrektur_mm": {k: round(v, 4) for k, v in korrektur.items()},
+        "z_trim_mm": {leg: round(robot.get_z_trim(leg), 3) for leg in robot.leg_names},
+    }
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(eintrag, ensure_ascii=False) + "\n")
+    except OSError as e:
+        console.print(f"[yellow]Protokoll nicht geschrieben: {e}[/yellow]")
 
 
 def run_auto_trim(
@@ -148,8 +191,16 @@ def run_auto_trim(
         if not typer.confirm("Roboter steht auf allen sechs Beinen. Starten?", default=False):
             return
 
+        vorrunde: dict[str, float] | None = None
+        lauf_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+
         for runde in range(1, rounds + 1):
-            settle_to_stance(robot)
+            # force=True ist hier entscheidend: ohne das ueberspringt
+            # settle_to_stance jedes Bein, das schon in der Standpose steht --
+            # und die Korrekturen liegen fast immer unter dessen 0,5-mm-
+            # Toleranz. Die Schleife wuerde dann z_trim weiterrechnen, ohne
+            # dass der Roboter die Werte je einnimmt.
+            settle_to_stance(robot, force=True)
             time.sleep(0.4)
 
             levels = _measure(sensors)
@@ -165,7 +216,9 @@ def run_auto_trim(
                 ).items():
                     korrektur[leg] = korrektur.get(leg, 0.0) + d * damping
 
-            _report(runde, result, tilt, korrektur, aktueller_travel)
+            _report(runde, result, tilt, korrektur, aktueller_travel, vorrunde)
+            _log(lauf_id, runde, result, tilt, korrektur, aktueller_travel, robot)
+            vorrunde = dict(levels)
 
             # Sicherung: wird die Neigung schlechter statt besser, stimmt
             # vermutlich das Vorzeichen nicht -- dann lieber abbrechen, als
@@ -190,7 +243,7 @@ def run_auto_trim(
                 robot.set_z_trim(leg, neu)
 
             if not gelernt and runde == 1:
-                settle_to_stance(robot)
+                settle_to_stance(robot, force=True)
                 time.sleep(0.4)
                 nachher = _measure(sensors)
                 geschaetzt = estimate_travel_mm(angewendet, vorher, nachher)

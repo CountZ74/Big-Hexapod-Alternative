@@ -252,6 +252,7 @@ def settle_to_stance(
     max_step_deg: float = 2.0,
     pause: float = 0.1,
     clip: bool = True,
+    force: bool = False,
 ) -> None:
     """Bringt alle Beine EINZELN nacheinander sauber in die Standpose.
 
@@ -273,6 +274,13 @@ def settle_to_stance(
         max_step_deg: Max. Gelenksprung pro Takt.
         pause: Pause zwischen den Beinen in Sekunden.
         clip: Winkel-Clipping.
+        force: Auch Beine anheben, die schon (fast) in der Standpose stehen.
+            Normalerweise werden die übersprungen — das spart Bewegung, wenn
+            ohnehin nichts zu tun ist. Für den Lastabgleich ist genau das
+            aber falsch: dort geht es nicht ums Erreichen der Position,
+            sondern ums LÖSEN der Reibung, damit sich die Last neu verteilen
+            kann. Und die Korrekturen liegen typischerweise unter der
+            Überspring-Toleranz, kämen also nie am Roboter an.
     """
     import time
 
@@ -293,8 +301,9 @@ def settle_to_stance(
     for leg in order:
         cx, cy, cz = robot.current_offset(leg)
 
-        # Schon in Standpose? (kleine Toleranz) -> überspringen
-        if abs(cx) < 0.5 and abs(cy) < 0.5 and abs(cz) < 0.5:
+        # Schon in Standpose? (kleine Toleranz) -> überspringen.
+        # Mit force=True trotzdem anheben: siehe Docstring.
+        if not force and abs(cx) < 0.5 and abs(cy) < 0.5 and abs(cz) < 0.5:
             continue
 
         # Hubhoehe RELATIV zur aktuellen Fusshoehe: so hebt der Fuss immer
