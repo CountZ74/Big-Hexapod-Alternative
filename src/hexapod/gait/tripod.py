@@ -12,6 +12,7 @@ Roboter immer auf einem stabilen Dreieck steht.
 
 from __future__ import annotations
 
+import statistics
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
@@ -107,19 +108,43 @@ def walk(
             Kontakt als zu früh.
 
     Returns:
-        Bein -> Höhe über der Standpose, an der es Boden gefunden hat. Das
-        ist die gemessene Geländehöhe an dieser Stelle. Leer, wenn nichts
-        früher aufgesetzt hat oder die Erkennung aus ist.
+        Bein -> Geländehöhe relativ zu seiner Tripod-Gruppe, in mm. Positiv
+        heißt: der Boden lag dort höher als bei den beiden anderen Beinen
+        derselben Gruppe. Nur Abweichungen über 1 mm werden gemeldet. Leer,
+        wenn der Untergrund gleichmäßig war oder die Erkennung aus ist.
     """
-    treffer: dict[str, float] = {}
+    gelaende: dict[str, float] = {}
+    roh: dict[str, float] = {}
 
     def halt(gruppe: tuple[str, ...]) -> Callable[[str], bool] | None:
         if touch_level is None:
             return None
+        roh.clear()
         return make_contact_freeze(
             robot, touch_level=touch_level, margin_mm=touch_margin_mm,
-            legs=gruppe, treffer=treffer,
+            legs=gruppe, treffer=roh,
         )
+
+    def auswerten(gruppe: tuple[str, ...]) -> None:
+        """Kontakthoehen der Gruppe in Gelaendehoehen umrechnen.
+
+        Die absolute Hoehe taugt dafuer nicht: waehrend eine Tripod-Gruppe
+        schwingt, sackt der Koerper ab, und zwar fuer alle drei Beine
+        gleichermassen. Erst der Vergleich INNERHALB der Gruppe trennt "der
+        Boden ist hier hoeher" von "der ganze Roboter steht tiefer".
+
+        Bezug ist der Median ueber ALLE drei Beine der Gruppe -- ein Bein,
+        das nicht angehalten hat, ist regulaer bis in die Standpose
+        durchgefedert und zaehlt deshalb mit 0.0. Nur die Angehaltenen zu
+        mitteln waere falsch: bei einem einzelnen Hindernis waere der Median
+        dann dessen eigene Hoehe, und die Abweichung immer null.
+        """
+        werte = {leg: roh.get(leg, 0.0) for leg in gruppe}
+        mitte = statistics.median(werte.values())
+        for leg, hoehe in werte.items():
+            abweichung = hoehe - mitte
+            if abs(abweichung) > 1.0:
+                gelaende[leg] = abweichung
 
     for _ in range(cycles):
         # Halbzyklus 1: A schwingt, B steht. include_start fuer stetigen
@@ -133,6 +158,7 @@ def walk(
             robot, paths, rate_hz=rate_hz, max_step_deg=max_step_deg, clip=clip,
             freeze=halt(GROUP_A),
         )
+        auswerten(GROUP_A)
 
         # Halbzyklus 2: B schwingt, A steht. Ersten Punkt weglassen, da er
         # mit dem letzten Punkt von H1 identisch ist (kontinuierlicher Boden).
@@ -146,5 +172,6 @@ def walk(
             robot, paths, rate_hz=rate_hz, max_step_deg=max_step_deg, clip=clip,
             freeze=halt(GROUP_B),
         )
+        auswerten(GROUP_B)
 
-    return treffer
+    return gelaende

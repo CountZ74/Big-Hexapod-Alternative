@@ -23,8 +23,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from hexapod.robot.hexapod import Hexapod
 
-# Aus der Messung: auf ebenem Boden lag der erste Kontakt bis zu 4 mm über
-# der Standpose. 5 mm lässt normales Absetzen durch und fängt Hindernisse.
+# Fuer settle_to_stance: dort soll sich das Bein in eine DEFINIERTE Standpose
+# druecken, deshalb zaehlt Kontakt erst oberhalb dieser Hoehe als zu frueh.
+# Auf ebenem Boden lag der erste Kontakt dort bis zu 4 mm ueber der Standpose.
+#
+# Im GANG ist das anders: da haengt eine ganze Tripod-Gruppe in der Luft, der
+# Koerper sackt weiter nach, und der erste Kontakt liegt entsprechend hoeher.
+# Eine feste Grenze taugt dort nicht -- siehe make_contact_freeze.
 DEFAULT_MARGIN_MM = 5.0
 # Im Sechsbeinstand liegen die Beine bei 12 bis 27 % Federweg, das Rauschen
 # bei rund 2 %. 5 % trennt sauber zwischen "berührt" und "trägt".
@@ -35,7 +40,7 @@ def make_contact_freeze(
     robot: Hexapod,
     *,
     touch_level: float = DEFAULT_TOUCH_LEVEL,
-    margin_mm: float = DEFAULT_MARGIN_MM,
+    margin_mm: float = 0.0,
     legs: Iterable[str] | None = None,
     treffer: dict[str, float] | None = None,
 ) -> Callable[[str], bool] | None:
@@ -44,8 +49,12 @@ def make_contact_freeze(
     Args:
         robot: Hexapod-Instanz.
         touch_level: Ab diesem Federweg gilt der Fuß als aufgesetzt.
-        margin_mm: Erst oberhalb dieser Höhe über der Standpose zählt der
-            Kontakt als "zu früh". Siehe Modul-Docstring.
+        margin_mm: Erst oberhalb dieser Höhe über der Standpose wird
+            angehalten. 0 heißt: bei Bodenkontakt sofort halten — im Gang das
+            Richtige, denn dort SOLL der Fuß dort landen, wo der Boden ist,
+            und die Last baut sich anschließend von selbst auf, wenn die
+            vorherige Standgruppe abhebt. Nur `settle_to_stance` braucht
+            einen Wert, weil es eine definierte Standpose herstellen will.
         legs: Nur diese Beine prüfen (z.B. die schwingende Tripod-Gruppe).
             None = alle mit Sensor.
         treffer: Wird, wenn angegeben, mit Bein -> Höhe über der Standpose
@@ -64,16 +73,31 @@ def make_contact_freeze(
     if not erlaubt:
         return None
 
+    # Ein Bein zaehlt erst als "kann aufsetzen", wenn es zwischendurch frei
+    # war. Ohne das friert es schon beim ABHEBEN ein: der Fuss verlaesst den
+    # Boden nicht in dem Moment, in dem die Bahn steigt -- erst entspannt sich
+    # die Feder ueber ihre paar Millimeter, und der Koerper sinkt dabei nach.
+    # Das Bein ist also noch belastet, waehrend sein Offset die Mindesthoehe
+    # schon ueberschritten hat.
+    war_frei: dict[str, bool] = dict.fromkeys(erlaubt, False)
+
     def freeze(leg: str) -> bool:
         if leg not in erlaubt:
             return False
+        messwert = sensors.read(leg, samples=1)
+        if messwert.level is None:
+            return False
+
+        if messwert.level < touch_level:
+            war_frei[leg] = True
+            return False
+        if not war_frei[leg]:
+            return False   # haengt noch am Boden vom Losfahren
+
         hoehe = robot.current_offset(leg)[2]
         # Nahe an der Standpose ist Kontakt normal -- dort soll sich das Bein
         # sauber einfedern statt anzuhalten.
         if hoehe <= margin_mm:
-            return False
-        messwert = sensors.read(leg, samples=1)
-        if messwert.level is None or messwert.level < touch_level:
             return False
         if treffer is not None:
             treffer[leg] = hoehe

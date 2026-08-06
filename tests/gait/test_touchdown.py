@@ -52,6 +52,31 @@ def _sensor_auf(robot: Hexapod, leg: str, level: float) -> None:
     driver.set_analog(sensor.channel, round(roh))
 
 
+def _boden_modell(robot: Hexapod, hoehen: dict[str, float],
+                  einfederweg_mm: float = 1.5) -> None:
+    """Ersetzt die Sensorlesung durch einen simulierten Boden.
+
+    Ein fester Analogwert waere unphysikalisch: ein Bein in der Luft meldet
+    keine Last. Hier waechst der Federweg erst, wenn der Fuss unter die
+    Bodenhoehe faehrt -- ueber `einfederweg_mm` linear von 0 auf 1.
+
+    hoehen: Bein -> Bodenhoehe als Offset zur Standpose. 0.0 heisst "Boden
+    genau auf Standpose-Hoehe", positive Werte sind Hindernisse.
+    """
+    from hexapod.drivers.foot_sensor import FootSensorReading
+
+    array = robot.foot_sensors
+    assert array is not None
+
+    def read(leg: str, *, samples: int | None = None) -> FootSensorReading:
+        z = robot.current_offset(leg)[2]
+        tiefe = hoehen.get(leg, 0.0) - z
+        level = max(0.0, min(1.0, tiefe / einfederweg_mm))
+        return FootSensorReading(leg=leg, channel=0, raw=0.0, level=level)
+
+    array.read = read  # type: ignore[method-assign]
+
+
 def test_ohne_schwelle_faehrt_alles_in_die_standpose(sim_hexapod: Hexapod) -> None:
     """Default-Verhalten bleibt unveraendert -- auch wenn Last anliegt."""
     sim_hexapod.stance()
@@ -66,8 +91,14 @@ def test_ohne_schwelle_faehrt_alles_in_die_standpose(sim_hexapod: Hexapod) -> No
 def test_kontakt_stoppt_das_absenken(sim_hexapod: Hexapod) -> None:
     sim_hexapod.stance()
     _alle_unbelastet(sim_hexapod)
-    # back_left findet sofort Boden, die anderen bleiben unbelastet
-    _sensor_auf(sim_hexapod, "back_left", 0.9)
+    # back_left steht auf einem Klotz, die anderen auf normalem Boden.
+    # Ein fester Sensorwert waere hier falsch: das Bein wird erst angehoben,
+    # und ein angehobener Fuss meldet keine Last. Die Erkennung wird
+    # absichtlich erst scharf, nachdem der Fuss einmal frei war -- sonst
+    # friert sie das Bein schon beim Abheben ein.
+    hoehen = dict.fromkeys(sim_hexapod.leg_names, -50.0)
+    hoehen["back_left"] = 8.0
+    _boden_modell(sim_hexapod, hoehen)
     frueh = settle_to_stance(
         sim_hexapod, force=True, rate_hz=500.0, pause=0.0, touch_level=0.05,
         touch_margin_mm=0.0
@@ -125,31 +156,6 @@ def test_bein_ohne_sensor_faehrt_normal(sim_hexapod: Hexapod) -> None:
 # ---------------------------------------------------------------------
 # Mindesthoehe: Kontakt zaehlt nur, wenn er FRUEHER kommt als erwartet
 # ---------------------------------------------------------------------
-
-
-def _boden_modell(robot: Hexapod, hoehen: dict[str, float],
-                  einfederweg_mm: float = 1.5) -> None:
-    """Ersetzt die Sensorlesung durch einen simulierten Boden.
-
-    Ein fester Analogwert waere unphysikalisch: ein Bein in der Luft meldet
-    keine Last. Hier waechst der Federweg erst, wenn der Fuss unter die
-    Bodenhoehe faehrt -- ueber `einfederweg_mm` linear von 0 auf 1.
-
-    hoehen: Bein -> Bodenhoehe als Offset zur Standpose. 0.0 heisst "Boden
-    genau auf Standpose-Hoehe", positive Werte sind Hindernisse.
-    """
-    from hexapod.drivers.foot_sensor import FootSensorReading
-
-    array = robot.foot_sensors
-    assert array is not None
-
-    def read(leg: str, *, samples: int | None = None) -> FootSensorReading:
-        z = robot.current_offset(leg)[2]
-        tiefe = hoehen.get(leg, 0.0) - z
-        level = max(0.0, min(1.0, tiefe / einfederweg_mm))
-        return FootSensorReading(leg=leg, channel=0, raw=0.0, level=level)
-
-    array.read = read  # type: ignore[method-assign]
 
 
 def test_normales_aufsetzen_laeuft_trotz_kontakt_durch(sim_hexapod: Hexapod) -> None:

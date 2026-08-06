@@ -30,20 +30,34 @@ def sim_hexapod() -> Hexapod:
     return robot
 
 
-def _boden(robot: Hexapod, hoehen: dict[str, float],
-           einfederweg_mm: float = 1.5) -> None:
-    """Simulierter Boden: Last entsteht erst beim Eindringen.
+# Im Stand ist die Feder schon ein Stueck eingedrueckt -- rund 20 % von
+# 5,5 mm. Der Fuss beruehrt den Boden also, waehrend das Bein noch auf
+# Standpose-Hoehe steht.
+STAND_EINFEDERUNG_MM = 1.1
+FEDERWEG_MM = 5.5
 
-    hoehen: Bein -> Bodenhoehe als Offset zur Standpose. Positive Werte sind
-    Hindernisse, 0.0 ist ebener Boden auf Standpose-Hoehe.
+
+def _boden(robot: Hexapod, hoehen: dict[str, float],
+           nachsinken_mm: float = 0.0) -> None:
+    """Simulierter Boden mit Feder.
+
+    hoehen: Bein -> Hoehe des Untergrunds als Offset zur Standpose. 0.0 ist
+        ebener Boden, positive Werte sind Hindernisse.
+    nachsinken_mm: Wie weit der Fuss beim Anheben zusaetzlich in Kontakt
+        bleibt. Bildet ab, dass der Koerper absackt, wenn ein Bein seine Last
+        abgibt -- die uebrigen fuenf federn dabei ein. Genau daran ist die
+        erste Fassung gescheitert: sie hat die Beine beim ABHEBEN
+        eingefroren, weil sie dort noch belastet waren.
     """
     array = robot.foot_sensors
     assert array is not None
 
     def read(leg: str, *, samples: int | None = None) -> FootSensorReading:
         z = robot.current_offset(leg)[2]
-        tiefe = hoehen.get(leg, 0.0) - z
-        level = max(0.0, min(1.0, tiefe / einfederweg_mm))
+        kontakt_bis = (hoehen.get(leg, 0.0) + STAND_EINFEDERUNG_MM
+                       + nachsinken_mm)
+        stauchung = kontakt_bis - z
+        level = max(0.0, min(1.0, stauchung / FEDERWEG_MM))
         return FootSensorReading(leg=leg, channel=0, raw=0.0, level=level)
 
     array.read = read  # type: ignore[method-assign]
@@ -86,7 +100,7 @@ def test_gemessene_hoehe_passt_zum_hindernis(sim_hexapod: Hexapod) -> None:
     treffer = walk(sim_hexapod, cycles=1, rate_hz=500.0, steps=12, touch_level=0.05)
 
     assert "front_left" in treffer
-    assert 7.0 < treffer["front_left"] < 13.0, treffer["front_left"]
+    assert 8.0 < treffer["front_left"] < 12.5, treffer["front_left"]
 
 
 def test_beide_gruppen_werden_geprueft(sim_hexapod: Hexapod) -> None:
@@ -113,3 +127,61 @@ def test_gang_laeuft_nach_dem_hindernis_weiter(sim_hexapod: Hexapod) -> None:
         if leg == "mid_left":
             continue
         assert abs(sim_hexapod.current_offset(leg)[2]) < 0.5, leg
+
+
+def test_kein_einfrieren_beim_abheben(sim_hexapod: Hexapod) -> None:
+    """Der Fehler, den der Roboter gezeigt hat: die Fuesse gingen nicht hoch.
+
+    Beim Anheben verlaesst der Fuss den Boden nicht sofort -- die Feder
+    entspannt sich erst, und der Koerper sackt nach, weil die uebrigen Beine
+    die Last uebernehmen. Das Bein ist also noch belastet, waehrend sein
+    Offset die Mindesthoehe laengst ueberschritten hat. Wer dort auf Kontakt
+    prueft, friert das Bein direkt beim Abheben ein.
+    """
+    _boden(sim_hexapod, dict.fromkeys(sim_hexapod.leg_names, 0.0),
+           nachsinken_mm=8.0)
+
+    hoch: dict[str, float] = dict.fromkeys(sim_hexapod.leg_names, 0.0)
+    original = sim_hexapod.set_all_foot_offsets
+
+    def mitschreiben(offsets, **kwargs):  # type: ignore[no-untyped-def]
+        for leg, (_, _, z) in offsets.items():
+            hoch[leg] = max(hoch[leg], z)
+        return original(offsets, **kwargs)
+
+    sim_hexapod.set_all_foot_offsets = mitschreiben  # type: ignore[method-assign]
+    gelaende = walk(sim_hexapod, cycles=1, rate_hz=500.0, steps=12,
+                    touch_level=0.05, height=30.0)
+
+    for leg, z in hoch.items():
+        assert z > 25.0, f"{leg} kam nur auf {z:.1f} mm statt 30 mm"
+    assert gelaende == {}, "ebener Boden darf kein Gelaende melden"
+
+
+def test_gleichmaessiges_absacken_ist_kein_gelaende(sim_hexapod: Hexapod) -> None:
+    """Absolut gemessen setzen alle Beine zu hoch auf -- relativ nicht.
+
+    Genau dafuer ist der Bezug auf den Gruppenmedian da: ein tiefer sitzender
+    Koerper verschiebt alle drei Beine der Gruppe gleich und faellt heraus.
+    """
+    _boden(sim_hexapod, dict.fromkeys(sim_hexapod.leg_names, 0.0),
+           nachsinken_mm=6.0)
+    assert walk(sim_hexapod, cycles=1, rate_hz=500.0, steps=12,
+                touch_level=0.05, height=30.0) == {}
+
+
+def test_hindernis_hebt_sich_von_der_gruppe_ab(sim_hexapod: Hexapod) -> None:
+    """Ein Klotz unter einem Fuss -- gemeldet wird der Abstand zur Gruppe."""
+    hoehen = dict.fromkeys(sim_hexapod.leg_names, 0.0)
+    hoehen["front_left"] = 10.0
+    _boden(sim_hexapod, hoehen, nachsinken_mm=6.0)
+
+    gelaende = walk(sim_hexapod, cycles=1, rate_hz=500.0, steps=40,
+                    touch_level=0.05, height=30.0)
+
+    assert set(gelaende) == {"front_left"}
+    # Gemeldet wird mehr als die 10 mm Klotzdicke: der Fuss meldet Kontakt
+    # schon, waehrend die Feder noch nachgibt. Die Feder ist ein mechanischer
+    # Tiefpass -- sie gleicht kleine Unebenheiten aus, und genau deshalb
+    # setzt die Erkennung frueher an, als der Klotz hoch ist.
+    assert gelaende["front_left"] > 9.0, gelaende["front_left"]
