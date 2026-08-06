@@ -12,9 +12,10 @@ Roboter immer auf einem stabilen Dreieck steht.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
+from hexapod.gait.contact import DEFAULT_MARGIN_MM, make_contact_freeze
 from hexapod.gait.executor import run_multi_leg_trajectory
 from hexapod.gait.trajectory import Vec3, stance_path, swing_path
 
@@ -80,7 +81,9 @@ def walk(
     max_step_deg: float = 3.0,
     direction: float = 1.0,
     clip: bool = True,
-) -> None:
+    touch_level: float | None = None,
+    touch_margin_mm: float = DEFAULT_MARGIN_MM,
+) -> dict[str, float]:
     """Laufe `cycles` volle Tripod-Zyklen.
 
     Ein voller Zyklus = zwei Halbzyklen (A schwingt, dann B schwingt).
@@ -96,7 +99,28 @@ def walk(
         max_step_deg: Max. Gelenksprung pro Takt (adaptive Unterteilung).
         direction: +1 vorwärts, -1 rückwärts.
         clip: Winkel-Clipping.
+        touch_level: Aufsetz-Erkennung. Ist ein Wert gesetzt, hält ein
+            Schwungbein an, sobald es früher Boden findet als geplant —
+            die beiden anderen der Gruppe laufen weiter. Ohne Wert bleibt
+            das Verhalten unverändert.
+        touch_margin_mm: Erst oberhalb dieser Höhe über der Standpose gilt
+            Kontakt als zu früh.
+
+    Returns:
+        Bein -> Höhe über der Standpose, an der es Boden gefunden hat. Das
+        ist die gemessene Geländehöhe an dieser Stelle. Leer, wenn nichts
+        früher aufgesetzt hat oder die Erkennung aus ist.
     """
+    treffer: dict[str, float] = {}
+
+    def halt(gruppe: tuple[str, ...]) -> Callable[[str], bool] | None:
+        if touch_level is None:
+            return None
+        return make_contact_freeze(
+            robot, touch_level=touch_level, margin_mm=touch_margin_mm,
+            legs=gruppe, treffer=treffer,
+        )
+
     for _ in range(cycles):
         # Halbzyklus 1: A schwingt, B steht. include_start fuer stetigen
         # Boden-Kontaktpunkt; danach Duplikat am Uebergang ueberspringen.
@@ -106,7 +130,8 @@ def walk(
             include_start=True,
         )
         run_multi_leg_trajectory(
-            robot, paths, rate_hz=rate_hz, max_step_deg=max_step_deg, clip=clip
+            robot, paths, rate_hz=rate_hz, max_step_deg=max_step_deg, clip=clip,
+            freeze=halt(GROUP_A),
         )
 
         # Halbzyklus 2: B schwingt, A steht. Ersten Punkt weglassen, da er
@@ -118,5 +143,8 @@ def walk(
         )
         paths = {leg: pts[1:] for leg, pts in paths.items()}
         run_multi_leg_trajectory(
-            robot, paths, rate_hz=rate_hz, max_step_deg=max_step_deg, clip=clip
+            robot, paths, rate_hz=rate_hz, max_step_deg=max_step_deg, clip=clip,
+            freeze=halt(GROUP_B),
         )
+
+    return treffer

@@ -91,10 +91,14 @@ def walk_cmd(
     direction: float = typer.Option(
         1.0, "--direction", "-d", help="+1 vorwärts, -1 rückwärts"
     ),
+    touch: float | None = typer.Option(
+        None, "--touch",
+        help="Aufsetz-Erkennung ab diesem Federweg in Prozent (z.B. 5)",
+    ),
 ) -> None:
     """Tripod-Gait laufen."""
     from .motion import cmd_walk
-    cmd_walk(config, cycles, stride, height, rate_hz, direction)
+    cmd_walk(config, cycles, stride, height, rate_hz, direction, touch_percent=touch)
 
 
 @app.command("move")

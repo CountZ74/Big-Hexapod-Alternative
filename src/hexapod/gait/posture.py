@@ -18,11 +18,11 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from hexapod.gait.contact import make_contact_freeze
 from hexapod.gait.trajectory import Vec3, linear_path
 from hexapod.kinematics.leg_ik import forward_kinematics
 
 if TYPE_CHECKING:
-    from hexapod.drivers.foot_sensor import FootSensorArray
     from hexapod.kinematics.body_ik import BodyPose
     from hexapod.robot.hexapod import Hexapod
 
@@ -356,17 +356,11 @@ def settle_to_stance(
         )
 
         halt: Callable[[str], bool] | None = None
-        sensors = robot.foot_sensors
-        if (touch_level is not None and sensors is not None
-                and sensors.has_sensor(leg)):
-            def halt(pruef_leg: str, _s: FootSensorArray = sensors) -> bool:
-                # Nur einfrieren, solange das Bein noch deutlich ueber der
-                # Standpose steht. Weiter unten ist Kontakt normal und
-                # erwuenscht -- dort soll es sich sauber einfedern.
-                if robot.current_offset(pruef_leg)[2] <= touch_margin_mm:
-                    return False
-                messwert = _s.read(pruef_leg, samples=1)
-                return messwert.level is not None and messwert.level >= touch_level
+        if touch_level is not None:
+            halt = make_contact_freeze(
+                robot, touch_level=touch_level, margin_mm=touch_margin_mm,
+                legs=[leg],
+            )
 
         run_single_leg_trajectory(
             robot, leg, seg3,

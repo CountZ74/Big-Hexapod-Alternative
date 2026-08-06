@@ -106,22 +106,32 @@ def cmd_walk(
     height: float,
     rate_hz: float,
     direction: float,
+    touch_percent: float | None = None,
 ) -> None:
     """Tripod-Gait laufen."""
     from hexapod.gait.tripod import walk
 
     def _seq(robot: Hexapod) -> None:
         typer.echo(f"Tripod-Gait: {cycles} Zyklen, stride={stride}mm, dir={direction}")
+        if touch_percent is not None:
+            typer.echo(f"Aufsetz-Erkennung aktiv bei {touch_percent:.1f} % Federweg")
         robot.stance(clip=True)
         time.sleep(1.0)
-        walk(
+        treffer = walk(
             robot,
             cycles=cycles,
             stride=stride,
             height=height,
             rate_hz=rate_hz,
             direction=direction,
+            touch_level=None if touch_percent is None else touch_percent / 100.0,
         )
+        if treffer:
+            typer.echo("\nFrüher aufgesetzt (Höhe über Standpose):")
+            for leg, dz in sorted(treffer.items(), key=lambda kv: -kv[1]):
+                typer.echo(f"  {leg:<13}{dz:+6.1f} mm")
+        elif touch_percent is not None:
+            typer.echo("\nKein Bein hat früher Boden gefunden.")
         typer.echo("Fertig.")
 
     _run_holding(config, _seq)
