@@ -231,11 +231,16 @@ def settle_cmd(
         None, "--touch",
         help="Aufsetz-Erkennung ab diesem Federweg in Prozent (z.B. 5)",
     ),
+    touch_margin_mm: float = typer.Option(
+        5.0, "--touch-margin",
+        help="Kontakt gilt erst oberhalb dieser Höhe über der Standpose als zu früh",
+    ),
     lift_mm: float = typer.Option(15.0, "--lift-mm", help="Hubhöhe je Bein"),
 ) -> None:
     """Beine einzeln anheben und absetzen, optional mit Aufsetz-Erkennung."""
     from .settle import run_settle
-    run_settle(config, touch_percent=touch, lift_mm=lift_mm)
+    run_settle(config, touch_percent=touch, touch_margin_mm=touch_margin_mm,
+               lift_mm=lift_mm)
 
 
 @app.command("status")

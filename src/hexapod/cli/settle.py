@@ -23,6 +23,7 @@ def run_settle(
     config_path: Path,
     *,
     touch_percent: float | None = None,
+    touch_margin_mm: float = 5.0,
     lift_mm: float = 15.0,
 ) -> None:
     from hexapod.gait.posture import settle_to_stance
@@ -45,11 +46,13 @@ def run_settle(
             anzahl = 0 if sensors is None else len(sensors.legs)
             console.print(
                 f"[dim]Aufsetz-Erkennung bei {touch_percent:.1f} % Federweg, "
+                f"nur oberhalb von {touch_margin_mm:.1f} mm ueber der Standpose. "
                 f"{anzahl} Beine mit Sensor.[/dim]"
             )
 
         frueh = settle_to_stance(
-            robot, force=True, lift=lift_mm, touch_level=schwelle
+            robot, force=True, lift=lift_mm, touch_level=schwelle,
+            touch_margin_mm=touch_margin_mm,
         )
 
         if not frueh:

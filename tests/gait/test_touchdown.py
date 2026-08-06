@@ -69,7 +69,8 @@ def test_kontakt_stoppt_das_absenken(sim_hexapod: Hexapod) -> None:
     # back_left findet sofort Boden, die anderen bleiben unbelastet
     _sensor_auf(sim_hexapod, "back_left", 0.9)
     frueh = settle_to_stance(
-        sim_hexapod, force=True, rate_hz=500.0, pause=0.0, touch_level=0.05
+        sim_hexapod, force=True, rate_hz=500.0, pause=0.0, touch_level=0.05,
+        touch_margin_mm=0.0
     )
     assert "back_left" in frueh
     # Es blieb ueber der Standpose stehen, nicht darunter
@@ -84,7 +85,8 @@ def test_unbelastete_beine_erreichen_die_standpose(sim_hexapod: Hexapod) -> None
     _alle_unbelastet(sim_hexapod)
     _sensor_auf(sim_hexapod, "back_left", 0.9)
     frueh = settle_to_stance(
-        sim_hexapod, force=True, rate_hz=500.0, pause=0.0, touch_level=0.05
+        sim_hexapod, force=True, rate_hz=500.0, pause=0.0, touch_level=0.05,
+        touch_margin_mm=0.0
     )
     for leg in sim_hexapod.leg_names:
         if leg == "back_left":
@@ -99,7 +101,8 @@ def test_schwelle_ueber_dem_messwert_loest_nicht_aus(sim_hexapod: Hexapod) -> No
     for leg in sim_hexapod.leg_names:
         _sensor_auf(sim_hexapod, leg, 0.02)    # unterhalb der Schwelle
     frueh = settle_to_stance(
-        sim_hexapod, force=True, rate_hz=500.0, pause=0.0, touch_level=0.05
+        sim_hexapod, force=True, rate_hz=500.0, pause=0.0, touch_level=0.05,
+        touch_margin_mm=0.0
     )
     assert frueh == {}
 
@@ -113,6 +116,90 @@ def test_bein_ohne_sensor_faehrt_normal(sim_hexapod: Hexapod) -> None:
     robot = Hexapod(cfg)
     robot.stance()
     _alle_unbelastet(robot)
-    frueh = settle_to_stance(robot, force=True, rate_hz=500.0, pause=0.0, touch_level=0.05)
+    frueh = settle_to_stance(robot, force=True, rate_hz=500.0, pause=0.0, touch_level=0.05,
+        touch_margin_mm=0.0)
     assert abs(robot.current_offset("mid_right")[2]) < 0.01
     assert "mid_right" not in frueh
+
+
+# ---------------------------------------------------------------------
+# Mindesthoehe: Kontakt zaehlt nur, wenn er FRUEHER kommt als erwartet
+# ---------------------------------------------------------------------
+
+
+def _boden_modell(robot: Hexapod, hoehen: dict[str, float],
+                  einfederweg_mm: float = 1.5) -> None:
+    """Ersetzt die Sensorlesung durch einen simulierten Boden.
+
+    Ein fester Analogwert waere unphysikalisch: ein Bein in der Luft meldet
+    keine Last. Hier waechst der Federweg erst, wenn der Fuss unter die
+    Bodenhoehe faehrt -- ueber `einfederweg_mm` linear von 0 auf 1.
+
+    hoehen: Bein -> Bodenhoehe als Offset zur Standpose. 0.0 heisst "Boden
+    genau auf Standpose-Hoehe", positive Werte sind Hindernisse.
+    """
+    from hexapod.drivers.foot_sensor import FootSensorReading
+
+    array = robot.foot_sensors
+    assert array is not None
+
+    def read(leg: str, *, samples: int | None = None) -> FootSensorReading:
+        z = robot.current_offset(leg)[2]
+        tiefe = hoehen.get(leg, 0.0) - z
+        level = max(0.0, min(1.0, tiefe / einfederweg_mm))
+        return FootSensorReading(leg=leg, channel=0, raw=0.0, level=level)
+
+    array.read = read  # type: ignore[method-assign]
+
+
+def test_normales_aufsetzen_laeuft_trotz_kontakt_durch(sim_hexapod: Hexapod) -> None:
+    """Der Fall, der am Roboter aufgefallen ist.
+
+    Auf ebenem Boden meldet jedes Bein beim Absetzen Kontakt -- es soll sich
+    aber trotzdem sauber in die Standpose einfedern. Ohne Mindesthoehe stoppt
+    sonst JEDES Bein zu frueh, der Koerper sinkt nie ganz ab, und der Roboter
+    steht auf sechs kaum eingefederten Beinen. Genau das war am echten
+    Roboter zu sehen: alle sechs blieben 1 bis 4 mm ueber der Standpose.
+    """
+    sim_hexapod.stance()
+    _boden_modell(sim_hexapod, dict.fromkeys(sim_hexapod.leg_names, 0.0))
+    frueh = settle_to_stance(
+        sim_hexapod, force=True, rate_hz=500.0, pause=0.0,
+        touch_level=0.05, touch_margin_mm=5.0,
+    )
+    assert frueh == {}
+    for leg in sim_hexapod.leg_names:
+        assert abs(sim_hexapod.current_offset(leg)[2]) < 0.01, leg
+
+
+def test_hindernis_oberhalb_der_mindesthoehe_stoppt(sim_hexapod: Hexapod) -> None:
+    """Ein 10 mm hohes Hindernis unter einem Fuss muss die Bahn anhalten."""
+    sim_hexapod.stance()
+    hoehen = dict.fromkeys(sim_hexapod.leg_names, 0.0)
+    hoehen["mid_left"] = 10.0
+    _boden_modell(sim_hexapod, hoehen)
+    frueh = settle_to_stance(
+        sim_hexapod, force=True, rate_hz=500.0, pause=0.0,
+        touch_level=0.05, touch_margin_mm=5.0,
+    )
+    assert "mid_left" in frueh
+    # Es bleibt ungefaehr auf Hindernishoehe stehen, nicht darunter
+    assert 8.0 < frueh["mid_left"] < 11.0, frueh["mid_left"]
+    for leg in sim_hexapod.leg_names:
+        if leg != "mid_left":
+            assert abs(sim_hexapod.current_offset(leg)[2]) < 0.01, leg
+
+
+def test_flaches_hindernis_unter_der_mindesthoehe_wird_durchgedrueckt(
+    sim_hexapod: Hexapod,
+) -> None:
+    """Eine 2-mm-Unebenheit ist kein Hindernis, sondern normale Toleranz."""
+    sim_hexapod.stance()
+    hoehen = dict.fromkeys(sim_hexapod.leg_names, 0.0)
+    hoehen["back_right"] = 2.0
+    _boden_modell(sim_hexapod, hoehen)
+    frueh = settle_to_stance(
+        sim_hexapod, force=True, rate_hz=500.0, pause=0.0,
+        touch_level=0.05, touch_margin_mm=5.0,
+    )
+    assert frueh == {}

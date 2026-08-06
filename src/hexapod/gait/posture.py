@@ -256,6 +256,7 @@ def settle_to_stance(
     clip: bool = True,
     force: bool = False,
     touch_level: float | None = None,
+    touch_margin_mm: float = 5.0,
 ) -> dict[str, float]:
     """Bringt alle Beine EINZELN nacheinander sauber in die Standpose.
 
@@ -279,15 +280,24 @@ def settle_to_stance(
         clip: Winkel-Clipping.
         touch_level: Aufsetz-Erkennung. Ist ein Wert gesetzt und hat das Bein
             einen kalibrierten Fußsensor, bricht die Absetzbewegung ab, sobald
-            der Federweg diese Schwelle erreicht — das Bein bleibt stehen, wo
-            es Boden gefunden hat, statt blind auf Standpose-Höhe zu fahren.
-            Damit findet der Roboter auf unebenem Untergrund den Boden, statt
-            ihn anzunehmen. Ohne Wert (Default) bleibt das Verhalten exakt
-            wie bisher.
+            der Federweg diese Schwelle erreicht. Ohne Wert (Default) bleibt
+            das Verhalten exakt wie bisher.
 
             Sinnvolle Groessenordnung: im Sechsbeinstand liegen die Beine bei
             12 bis 27 % Federweg, das Rauschen bei rund 2 %. Etwa 5 % trennt
             also sauber zwischen "beruehrt" und "traegt".
+        touch_margin_mm: Ab welcher Hoehe ueber der Standpose der Kontakt
+            ueberhaupt als "zu frueh" gilt. Naeher dran faehrt das Bein
+            normal zu Ende.
+
+            Das ist wesentlich, nicht kosmetisch: die Schwelle allein greift
+            schon beim Antippen, lange bevor sich das Bein in die Standpose
+            drueckt. Ohne Mindesthoehe stoppt deshalb JEDES Bein zu frueh,
+            der Koerper sinkt nie ganz ab, und der Roboter steht auf sechs
+            kaum eingefederten Beinen -- schlechter als ohne Erkennung.
+            Gemessen wurde auf ebenem Boden ein erster Kontakt bis 4 mm ueber
+            der Standpose; 5 mm laesst das normale Absetzen also durch und
+            faengt echte Hindernisse ab.
         force: Auch Beine anheben, die schon (fast) in der Standpose stehen.
             Normalerweise werden die übersprungen — das spart Bewegung, wenn
             ohnehin nichts zu tun ist. Für den Lastabgleich ist genau das
@@ -350,6 +360,11 @@ def settle_to_stance(
         if (touch_level is not None and sensors is not None
                 and sensors.has_sensor(leg)):
             def stop(_leg: str = leg, _s: FootSensorArray = sensors) -> bool:
+                # Nur abbrechen, solange das Bein noch deutlich ueber der
+                # Standpose steht. Weiter unten ist Kontakt normal und
+                # erwuenscht -- dort soll es sich sauber einfedern.
+                if robot.current_offset(_leg)[2] <= touch_margin_mm:
+                    return False
                 messwert = _s.read(_leg, samples=1)
                 return messwert.level is not None and messwert.level >= touch_level
 
