@@ -27,8 +27,8 @@ from __future__ import annotations
 import json
 import statistics
 import time
-from itertools import pairwise
 from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
 
 import typer
