@@ -283,6 +283,18 @@ class FootSensorsConfig(StrictBase):
 
     poll_hz: float = Field(default=50.0, gt=0.0, le=200.0)
     samples: int = Field(default=3, ge=1, le=15)
+    travel_mm: float | None = Field(
+        default=None,
+        gt=0.0,
+        le=50.0,
+        description=(
+            "Mechanischer Vollweg der Schubstange in mm — die Strecke, die "
+            "raw_unloaded von raw_full trennt. Rechnet Federweg-Anteile in "
+            "Millimeter um, was der Bein-Hoehenabgleich braucht. Eine "
+            "Konstruktionsgroesse, die man einmal misst; fehlt sie, muss "
+            "das Werkzeug sie schaetzen, und das ist deutlich unzuverlaessiger."
+        ),
+    )
     sensors: list[FootSensorConfig] = Field(default_factory=list)
 
     @model_validator(mode="after")

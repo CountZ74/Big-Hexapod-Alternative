@@ -131,33 +131,42 @@ def estimate_travel_mm(
     level_before: Mapping[str, float],
     level_after: Mapping[str, float],
     *,
-    min_step_mm: float = 0.05,
+    min_legs: int = 3,
+    min_span_mm: float = 0.3,
 ) -> float | None:
     """Aus einer angewendeten Korrektur den Federweg in mm zurueckrechnen.
 
-    Der mechanische Vollweg der Schubstange muss nicht bekannt sein — der
-    Roboter misst ihn selbst: eine bekannte z_trim-Aenderung erzeugt eine
-    messbare Aenderung des Federwegs, und das Verhaeltnis ist der gesuchte
-    Faktor.
+    Besser ist, den Vollweg einmal zu messen und in die robot.yaml zu
+    schreiben (``foot_sensors.travel_mm``). Diese Schaetzung ist nur der
+    Notnagel, wenn er dort fehlt.
+
+    Gerechnet wird als **Regression der Reaktion ueber die Korrektur**, nicht
+    als Median von Quotienten. Die angewendete Korrektur ist exakt bekannt,
+    die gemessene Reaktion verrauscht — ein Quotient mit fast leerem Nenner
+    sprengt die Schaetzung sonst um Groessenordnungen. Genau das ist einmal
+    passiert: aus einem echten Vollweg von 5,5 mm wurden 15 mm, und die
+    Schleife hat daraufhin dreifach ueberkorrigiert.
 
     Returns:
-        Geschaetzter Vollweg in mm, oder None wenn die Schritte zu klein
-        waren, um daraus etwas Belastbares abzuleiten.
+        Geschaetzter Vollweg in mm, oder None wenn die Anregung zu klein war
+        oder die Reaktion nicht zur Korrektur passt.
     """
-    quotients: list[float] = []
-    for leg, dz in applied_mm.items():
-        if abs(dz) < min_step_mm or leg not in level_after or leg not in level_before:
-            continue
-        d_level = level_after[leg] - level_before[leg]
-        # z_trim positiv = Fuss tiefer = mehr Last, daher gleiches Vorzeichen.
-        if abs(d_level) < 1e-6:
-            continue
-        quotients.append(abs(dz / d_level))
-    if not quotients:
-        return None
-    quotients.sort()
-    return quotients[len(quotients) // 2]
+    dz: list[float] = []
+    dl: list[float] = []
+    for leg, z in applied_mm.items():
+        if leg in level_before and leg in level_after:
+            dz.append(z)
+            dl.append(level_after[leg] - level_before[leg])
 
+    if len(dz) < min_legs:
+        return None
+    if max(dz) - min(dz) < min_span_mm:
+        return None  # zu wenig angeregt, um etwas zu unterscheiden
+
+    nenner = sum(z * lvl for z, lvl in zip(dz, dl, strict=True))
+    if nenner <= 0.0:
+        return None  # keine oder gegenlaeufige Reaktion -> nichts ableitbar
+    return sum(z * z for z in dz) / nenner
 
 def tilt_corrections(
     roll_rad: float,

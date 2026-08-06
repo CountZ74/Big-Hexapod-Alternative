@@ -138,15 +138,42 @@ def test_unsinnige_parameter() -> None:
 def test_vollweg_wird_zurueckgerechnet() -> None:
     """1 mm z_trim erzeugt 0.2 Federweg -> Vollweg 5 mm."""
     got = estimate_travel_mm(
-        {"a": 1.0, "b": -1.0},
-        {"a": 0.20, "b": 0.20},
-        {"a": 0.40, "b": 0.00},
+        {"a": 1.0, "b": -1.0, "c": 0.5},
+        {"a": 0.20, "b": 0.20, "c": 0.20},
+        {"a": 0.40, "b": 0.00, "c": 0.30},
     )
     assert got == pytest.approx(5.0)
 
 
 def test_zu_kleine_schritte_liefern_keine_schaetzung() -> None:
-    assert estimate_travel_mm({"a": 0.001}, {"a": 0.2}, {"a": 0.2}) is None
+    assert estimate_travel_mm(
+        {"a": 0.001, "b": -0.001, "c": 0.0},
+        {"a": 0.2, "b": 0.2, "c": 0.2},
+        {"a": 0.2, "b": 0.2, "c": 0.2},
+    ) is None
+
+
+def test_verrauschte_reaktion_sprengt_die_schaetzung_nicht() -> None:
+    """Der Fall, der einmal 15 mm statt 5,5 mm geliefert hat.
+
+    Ein Bein reagiert kaum -- als Median von Quotienten waere das ein
+    riesiger Ausreisser. Die Regression gewichtet es klein.
+    """
+    got = estimate_travel_mm(
+        {"a": 1.0, "b": -1.0, "c": 0.5, "d": -0.5},
+        dict.fromkeys("abcd", 0.20),
+        {"a": 0.38, "b": 0.02, "c": 0.29, "d": 0.199},   # d fast keine Reaktion
+    )
+    assert got is not None
+    assert 4.5 < got < 6.5, got
+
+
+def test_gegenlaeufige_reaktion_wird_verworfen() -> None:
+    assert estimate_travel_mm(
+        {"a": 1.0, "b": -1.0, "c": 0.5},
+        dict.fromkeys("abc", 0.20),
+        {"a": 0.10, "b": 0.30, "c": 0.15},   # falsche Richtung
+    ) is None
 
 
 def test_schleife_konvergiert() -> None:

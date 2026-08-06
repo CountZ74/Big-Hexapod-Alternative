@@ -178,8 +178,20 @@ def run_auto_trim(
             raise typer.Exit(code=1)
 
         positions = robot.neutral_foot_xy
-        aktueller_travel = travel_mm or DEFAULT_TRAVEL_MM
-        gelernt = travel_mm is not None
+        # Reihenfolge: CLI schlaegt Konfiguration schlaegt Schaetzung.
+        aus_config = robot.config.foot_sensors.travel_mm
+        aktueller_travel = travel_mm or aus_config or DEFAULT_TRAVEL_MM
+        gelernt = travel_mm is not None or aus_config is not None
+        if gelernt:
+            quelle = "CLI" if travel_mm is not None else "robot.yaml"
+            console.print(
+                f"[dim]Vollweg der Schubstange: {aktueller_travel:.2f} mm ({quelle})[/dim]"
+            )
+        else:
+            console.print(
+                "[yellow]Kein Vollweg in foot_sensors.travel_mm hinterlegt — "
+                "er wird geschaetzt, was deutlich unzuverlaessiger ist.[/yellow]"
+            )
         letzte_neigung: float | None = None
 
         console.print(
