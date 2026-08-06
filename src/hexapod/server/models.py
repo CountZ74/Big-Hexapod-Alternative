@@ -14,6 +14,11 @@ class LegTelemetry(BaseModel):
     angles_deg: list[float] | None  # [theta1, theta2, theta3] oder None bei Fehler
     foot_leg_frame_mm: list[float] | None  # [x, y, z] im Leg-Frame oder None
     servo_us: list[float | None]  # rohe Pulsweiten [coxa, femur, tibia]
+    # Fusssensor: normierter Federweg 0..1 (0 = unbelastet, 1 = am Anschlag)
+    # und der Rohwert des Analogeingangs. None, wenn kein Sensor am Bein
+    # haengt oder er noch nicht kalibriert ist.
+    foot_level: float | None = None
+    foot_raw: float | None = None
 
 
 class TelemetrySnapshot(BaseModel):
@@ -22,6 +27,10 @@ class TelemetrySnapshot(BaseModel):
     timestamp: float
     ok: bool  # True, wenn alle Beine sauber gelesen werden konnten
     legs: list[LegTelemetry]
+    # Lastanteil je Bein, auf die Summe aller Federwege normiert. Bei sechs
+    # gleichmaessig tragenden Beinen also je rund 1/6. Nur gesetzt, wenn
+    # ueberhaupt Last anliegt.
+    load_share: dict[str, float] | None = None
 
 
 class ServerStatus(BaseModel):

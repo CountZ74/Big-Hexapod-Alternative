@@ -533,10 +533,38 @@ class RobotWorker:
 
     # ---- Telemetrie ----
 
+    # Untergrenze der Gesamtlast, ab der eine Verteilung ueberhaupt Sinn hat
+    # (Summe der Federwege ueber alle Beine; im Stand rund 1.2).
+    _MIN_TOTAL_LOAD = 0.10
+
     def _gather(self) -> TelemetrySnapshot:
         robot = self._robot
         assert robot is not None
         raw = robot.read_servo_state()
+
+        # Fusssensoren: bewusst mit samples=1. Der Median ueber mehrere
+        # Messungen ist fuer die Kalibrierung wichtig, hier zaehlt, dass
+        # _gather() den Gait nicht ausbremst -- jede Messung ist ein
+        # serieller Roundtrip.
+        feet: dict[str, tuple[float, float | None]] = {}
+        share: dict[str, float] | None = None
+        if robot.foot_sensors is not None:
+            try:
+                messwerte = robot.foot_sensors.read_all(samples=1)
+                feet = {leg: (r.raw, r.level) for leg, r in messwerte.items()}
+                pegel = {leg: r.level for leg, r in messwerte.items()
+                         if r.level is not None}
+                summe = sum(pegel.values())
+                # Anteile erst ab spuerbarer Gesamtlast. Liegt der Roboter auf
+                # dem Bauch, tragen die Beine fast nichts -- ein Anteil von
+                # fast nichts ergibt dann Phantomwerte wie 50/50 fuer zwei
+                # Beine, die sich gerade eben beruehren. Im Stand liegt die
+                # Summe bei rund 120 %.
+                if summe >= self._MIN_TOTAL_LOAD:
+                    share = {leg: round(v / summe, 4) for leg, v in pegel.items()}
+            except Exception as e:
+                logger.debug("Fusssensoren nicht lesbar: %s", e)
+
         legs: list[LegTelemetry] = []
         ok = True
         for name in robot.leg_names:
@@ -550,6 +578,8 @@ class RobotWorker:
                     legs.append(LegTelemetry(
                         name=name, angles_deg=None,
                         foot_leg_frame_mm=None, servo_us=us,
+                        foot_raw=feet.get(name, (None, None))[0],
+                        foot_level=feet.get(name, (None, None))[1],
                     ))
                     continue
                 foot = forward_kinematics(a0, a1, a2, robot.leg_lengths)
@@ -558,6 +588,8 @@ class RobotWorker:
                     angles_deg=[round(math.degrees(a), 2) for a in (a0, a1, a2)],
                     foot_leg_frame_mm=[round(v, 2) for v in foot],
                     servo_us=us,
+                    foot_raw=feet.get(name, (None, None))[0],
+                    foot_level=feet.get(name, (None, None))[1],
                 ))
             except Exception as e:
                 ok = False
@@ -565,8 +597,12 @@ class RobotWorker:
                 legs.append(LegTelemetry(
                     name=name, angles_deg=None,
                     foot_leg_frame_mm=None, servo_us=[None, None, None],
+                    foot_raw=feet.get(name, (None, None))[0],
+                    foot_level=feet.get(name, (None, None))[1],
                 ))
-        return TelemetrySnapshot(timestamp=time.time(), ok=ok, legs=legs)
+        return TelemetrySnapshot(
+            timestamp=time.time(), ok=ok, legs=legs, load_share=share
+        )
 
     # ---- Batterie ----
 

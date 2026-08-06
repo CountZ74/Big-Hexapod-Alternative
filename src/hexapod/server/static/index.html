@@ -68,6 +68,10 @@ header{
 .joint .row .val{color:var(--text);font-weight:500}
 .bar{height:4px;background:var(--surface2);border-radius:2px;overflow:hidden}
 .bar>span{display:block;height:100%;background:var(--teal);width:0;transition:width .25s ease}
+.bar.load>span{background:var(--amber)}
+.share{font-family:var(--mono);font-size:12px;color:var(--muted);margin:0 0 12px;display:flex;gap:14px;flex-wrap:wrap}
+.share b{color:var(--amber);font-weight:600}
+.share .lbl{color:var(--dim)}
 .foot{margin-top:13px;padding-top:11px;border-top:1px solid var(--border);
   display:flex;gap:14px;font-family:var(--mono);font-size:12px}
 .foot .axis{color:var(--dim)}
@@ -194,7 +198,8 @@ header{
   </div>
 
   <details class="telem">
-    <summary>Beintelemetrie · Gelenkwinkel &amp; Fußposition (Fehlersuche)</summary>
+    <summary>Beintelemetrie · Gelenkwinkel, Fußposition &amp; Last (Fehlersuche)</summary>
+    <div id="load-share" class="share"></div>
     <div class="legs" id="legs"></div>
   </details>
 
@@ -425,9 +430,19 @@ function legCard(leg){
   });
   const fx=foot?foot[0].toFixed(0):'—',fy=foot?foot[1].toFixed(0):'—',fz=foot?foot[2].toFixed(0):'—';
   const usTxt=us.map(u=>u==null?'—':Math.round(u)).join(' / ');
+  // Fusssensor. Bernstein statt Teal, weil das eine MESSUNG ist und keine
+  // Sollvorgabe wie die Gelenkbalken darueber.
+  let load='';
+  if(leg.foot_level!=null){
+    const pct=Math.round(leg.foot_level*100);
+    load=`<div class="joint"><div class="row"><span class="lbl">LAST</span><span class="val">${pct} %</span></div><div class="bar load"><span style="width:${pct}%"></span></div></div>`;
+  } else if(leg.foot_raw!=null){
+    load=`<div class="joint"><div class="row"><span class="lbl">LAST</span><span class="val nullval">roh ${Math.round(leg.foot_raw)}</span></div><div class="bar load"><span style="width:0%"></span></div></div>`;
+  }
   return `<div class="card ${degraded?'degraded':''}">
     <div class="ch"><span class="name">${leg.name.toUpperCase()}</span><span class="dot ${degraded?'stale':'live'}"></span></div>
     ${joints}
+    ${load}
     <div class="foot"><span><span class="axis">X </span><span class="num">${fx}</span></span><span><span class="axis">Y </span><span class="num">${fy}</span></span><span><span class="axis">Z </span><span class="num">${fz}</span> mm</span></div>
     <div class="us">µs ${usTxt}</div>
   </div>`;
@@ -436,6 +451,15 @@ function legCard(leg){
 function render(snap){
   lastFrame=Date.now();
   $('legs').innerHTML=(snap.legs||[]).map(legCard).join('');
+  // Lastverteilung: sechs gleichmaessig tragende Beine ergaeben je rund 17 %.
+  const el=$('load-share');
+  if(el){
+    const sh=snap.load_share;
+    el.innerHTML = sh
+      ? '<span class="lbl">LASTVERTEILUNG</span>' + Object.entries(sh).sort((a,b)=>b[1]-a[1])
+          .map(([n,v])=>`<span>${n.replace('_',' ')} <b>${Math.round(v*100)}%</b></span>`).join('')
+      : '<span class="lbl">LASTVERTEILUNG — keine Last gemessen</span>';
+  }
   const ok=snap.ok;
   $('ok-dot').className='dot '+(ok?'live':'stale');
   $('ok-text').textContent=ok?'ALLE OK':'DEGRADIERT';
