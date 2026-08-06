@@ -175,6 +175,7 @@ def run_stance_trim(config: Path, simulator: bool = False, do_power_up: bool = F
             # settle_to_stance -- das startet intern am ausgestreckten Calib-Punkt
             # (233 mm = Reichweitenlimit) und wirft dort UnreachableError.
             robot.prime()
+            robot.sync_state_from_hardware()
             time.sleep(0.2)
         for leg in legs:
             send(leg)

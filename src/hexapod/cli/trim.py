@@ -65,6 +65,10 @@ def run_trim(config: Path, do_power_up: bool = False) -> None:
             # in die Standpose settlen, NICHT hart ziehen.
             from hexapod.gait.posture import settle_to_stance
             robot.prime()
+            # Modell nachziehen, BEVOR eine Bahn geplant wird -- sonst
+            # startet settle_to_stance an der Kaltstart-Annahme (gestreckte
+            # Beine) und reisst die Beine dorthin.
+            robot.sync_state_from_hardware()
             time.sleep(0.3)
             settle_to_stance(robot)
         render()

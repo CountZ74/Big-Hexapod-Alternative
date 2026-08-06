@@ -143,7 +143,7 @@ servos:
   joint: femur
   bus: left
   channel: 10
-  center_us: 1447.0
+  center_us: 1411.0
   direction: -1
   min_us: 600.0
   max_us: 2600.0

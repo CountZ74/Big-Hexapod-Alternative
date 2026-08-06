@@ -209,6 +209,16 @@ class RobotWorker:
     def _run(self) -> None:
         logger.info("Worker startet, oeffne Roboter aus %s", self._config_path)
         self._robot = self._open_robot()
+        # Modell sofort an die Hardware angleichen. Ohne das glaubt es nach
+        # jedem Serverstart, die Beine seien gestreckt (theta=0) -- und der
+        # erste Bewegungsbefehl faehrt sie physisch dorthin.
+        try:
+            if self._robot.sync_state_from_hardware():
+                logger.info("Modell aus der Hardware rekonstruiert.")
+            else:
+                logger.info("Kaltstart erkannt (kein Puls) — Modell unveraendert.")
+        except Exception as e:
+            logger.warning("Zustands-Rekonstruktion fehlgeschlagen: %s", e)
         self._robot_name = self._robot.config.name
         self._driver_type = ",".join(
             f"{name}={bus.type}" for name, bus in self._robot.config.buses.items()

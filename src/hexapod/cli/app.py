@@ -186,6 +186,27 @@ def foot_calibrate_cmd(
     run_foot_calibration(config, simulator=simulator, only_leg=leg)
 
 
+@app.command("auto-trim")
+def auto_trim_cmd(
+    config: Path = _CONFIG_OPT,
+    rounds: int = typer.Option(4, "--rounds", "-n", help="Anzahl Mess-/Korrekturrunden"),
+    travel_mm: float | None = typer.Option(
+        None, "--travel-mm",
+        help="Vollweg der Schubstange in mm (Default: misst sich selbst ein)",
+    ),
+    damping: float = typer.Option(0.8, "--damping", help="Anteil der Korrektur je Runde"),
+    imu: bool = typer.Option(
+        True, "--imu/--no-imu",
+        help="IMU mitverwenden (nur auf waagerechtem Boden sinnvoll)",
+    ),
+) -> None:
+    """z_trim automatisch aus Fußsensoren und IMU bestimmen (BEWEGT SERVOS)."""
+    from .autotrim import run_auto_trim
+    run_auto_trim(
+        config, rounds=rounds, travel_mm=travel_mm, damping=damping, use_imu=imu
+    )
+
+
 @app.command("status")
 def status() -> None:
     """Zeigt den aktuellen Roboter-Status."""

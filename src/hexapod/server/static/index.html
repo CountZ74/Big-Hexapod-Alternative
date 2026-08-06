@@ -458,7 +458,7 @@ async function fetchStatus(){
     const stateEl = $('robot-state');
     if(stateEl){ stateEl.textContent=s.robot_state.toUpperCase(); stateEl.style.color=stateColors[s.robot_state]||'var(--text)'; }
     // Buttons je State en/disablen
-    const allowed={'off':['btn-powerup','btn-sync'],'standing':['btn-standup','btn-liedown','btn-stance','btn-halt','btn-wave','btn-liftleg','btn-mantis','btn-stepup','btn-climbover'],'walking':['btn-halt'],'lying':['btn-standup']};
+    const allowed={'off':['btn-powerup','btn-sync'],'standing':['btn-sync','btn-standup','btn-liedown','btn-stance','btn-halt','btn-wave','btn-liftleg','btn-mantis','btn-stepup','btn-climbover'],'walking':['btn-halt'],'lying':['btn-sync','btn-standup']};
     const allBtns=['btn-powerup','btn-sync','btn-standup','btn-liedown','btn-stance','btn-halt','btn-wave','btn-liftleg','btn-mantis','btn-stepup','btn-climbover'];
     const ok=allowed[s.robot_state]||[];
     allBtns.forEach(id=>{const b=$(id);if(b){b.disabled=!ok.includes(id);b.style.opacity=ok.includes(id)?'1':'0.3';b.style.cursor=ok.includes(id)?'pointer':'not-allowed';}});

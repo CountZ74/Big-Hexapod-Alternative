@@ -554,6 +554,32 @@ class Hexapod:
         return total
 
 
+    def sync_state_from_hardware(self) -> bool:
+        """Modell an die tatsaechlich anliegenden Servo-Pulse angleichen.
+
+        Frisch konstruiert steht das Bewegungsmodell auf Winkel 0 — also auf
+        kerzengerade ausgestreckten Beinen. Steht der Roboter in Wirklichkeit
+        schon, rechnet jede folgende Bahnplanung gegen diese Falschannahme,
+        und der erste Takt reisst die Beine physisch dorthin.
+
+        Returns:
+            True, wenn das Modell nachgezogen wurde. False, wenn mindestens
+            ein Kanal keinen Puls fuehrt — dann liegt ein echter Kaltstart
+            vor, die Hardware hat gar keine Position, und das Modell bleibt
+            unveraendert.
+        """
+        for leg_name in self._leg_names:
+            for joint in (Joint.COXA, Joint.FEMUR, Joint.TIBIA):
+                servo = self._config.get_leg_servo(leg_name, joint)
+                if self._drivers[servo.bus].get_position(servo.channel) <= 0.0:
+                    logger.info(
+                        "Kein Puls auf %s/%d — Modell bleibt beim Kaltstart-Zustand.",
+                        servo.bus, servo.channel,
+                    )
+                    return False
+        self.reconstruct_state_from_hardware()
+        return True
+
     def reconstruct_state_from_hardware(self) -> None:
         """Liest alle Servo-Positionen vom Maestro, konvertiert zu Winkeln."""
         for leg_name in self._leg_names:
