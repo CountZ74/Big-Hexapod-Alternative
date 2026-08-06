@@ -217,3 +217,62 @@ def test_ebener_boden_meldet_nichts_mit_der_gang_grenze(sim_hexapod: Hexapod) ->
            nachsinken_mm=6.2)
     assert walk(sim_hexapod, cycles=2, rate_hz=500.0, steps=40,
                 touch_level=0.05, height=30.0) == {}
+
+
+# ---------------------------------------------------------------------
+# Die gemessene Hoehe muss auch benutzt werden
+# ---------------------------------------------------------------------
+
+
+def _bahnen(robot: Hexapod) -> list[dict[str, float]]:
+    """Alle kommandierten z-Werte mitschreiben."""
+    spur: list[dict[str, float]] = []
+    original = robot.set_all_foot_offsets
+
+    def mit(offsets, **kwargs):  # type: ignore[no-untyped-def]
+        spur.append({leg: v[2] for leg, v in offsets.items()})
+        return original(offsets, **kwargs)
+
+    robot.set_all_foot_offsets = mit  # type: ignore[method-assign]
+    return spur
+
+
+def test_bein_auf_stufe_wird_nicht_wieder_hineingedrueckt(
+    sim_hexapod: Hexapod,
+) -> None:
+    """Am Roboter beobachtet: das Bein auf dem Klotz wurde nach aussen geschoben.
+
+    Ursache war, dass die Messung nach dem Halbzyklus verfiel. Die naechste
+    Bahn zielte wieder auf z=0 -- unter die Stufe. Vertikal kann das Bein
+    dort nicht nachgeben, also weicht der Fuss seitlich aus.
+    """
+    hoehen = dict.fromkeys(sim_hexapod.leg_names, 0.0)
+    hoehen["front_left"] = 20.0
+    _boden(sim_hexapod, hoehen)
+    spur = _bahnen(sim_hexapod)
+
+    walk(sim_hexapod, cycles=3, rate_hz=500.0, steps=20, touch_level=0.05,
+         height=30.0)
+
+    # Nach dem ersten Aufsetzen darf front_left nie mehr tief kommandiert
+    # werden, solange es auf der Stufe steht.
+    zweite_haelfte = spur[len(spur) // 3:]
+    tiefster = min(f["front_left"] for f in zweite_haelfte)
+    assert tiefster > 12.0, f"front_left wurde auf {tiefster:.1f} mm gedrueckt"
+
+
+def test_stufe_verlassen_setzt_die_hoehe_zurueck(sim_hexapod: Hexapod) -> None:
+    """Steigt das Bein herunter, darf die alte Hoehe nicht haengenbleiben."""
+    hoehen = dict.fromkeys(sim_hexapod.leg_names, 0.0)
+    hoehen["front_left"] = 20.0
+    _boden(sim_hexapod, hoehen)
+    walk(sim_hexapod, cycles=1, rate_hz=500.0, steps=20, touch_level=0.05,
+         height=30.0)
+
+    hoehen["front_left"] = 0.0          # Klotz weg
+    spur = _bahnen(sim_hexapod)
+    walk(sim_hexapod, cycles=2, rate_hz=500.0, steps=20, touch_level=0.05,
+         height=30.0)
+
+    letzte = spur[-1]["front_left"]
+    assert abs(letzte) < 1.0, f"front_left blieb bei {letzte:.1f} mm haengen"

@@ -153,32 +153,67 @@ def walk(
             if abweichung > 1.0:
                 gelaende[leg] = abweichung
 
+    # Wo jedes Bein zuletzt Boden gefunden hat, als Offset zur Standpose.
+    # Das ist der Teil, der die Messung ueberhaupt erst nuetzlich macht:
+    # ohne ihn zielt die naechste Bahn wieder auf z=0, also unter das
+    # Hindernis. Vertikal kann das Bein dann nicht nachgeben -- der Federweg
+    # ist nach wenigen Millimetern zu Ende -- und der Befehl loest sich
+    # geometrisch auf, indem der Fuss nach aussen rutscht.
+    bodenhoehe: dict[str, float] = dict.fromkeys(robot.leg_names, 0.0)
+
+    def auf_gelaende(
+        paths: dict[str, list[Vec3]], schwung: tuple[str, ...]
+    ) -> dict[str, list[Vec3]]:
+        """Jede Bahn auf die zuletzt gemessene Bodenhoehe ihres Beins legen.
+
+        Standbeine bekommen die Hoehe konstant -- sie stehen ja darauf.
+
+        Beim Schwungbein laeuft sie bis zum Scheitel auf null aus: Es muss
+        dort ABHEBEN, wo es steht (sonst zieht die Bahn es erst in die Stufe
+        hinein), soll aber auf der nominalen Ebene wieder aufsetzen. Nur so
+        misst es die neue Hoehe unvoreingenommen -- und findet 0, wenn die
+        Stufe zu Ende ist.
+        """
+        ergebnis: dict[str, list[Vec3]] = {}
+        for leg, punkte in paths.items():
+            hoehe = bodenhoehe[leg]
+            if leg not in schwung or hoehe == 0.0:
+                ergebnis[leg] = [(x, y, z + hoehe) for (x, y, z) in punkte]
+                continue
+            scheitel = max(1, len(punkte) // 2)
+            ergebnis[leg] = [
+                (x, y, z + hoehe * max(0.0, 1.0 - i / scheitel))
+                for i, (x, y, z) in enumerate(punkte)
+            ]
+        return ergebnis
+
+    def halbzyklus(schwung: tuple[str, ...], stand: tuple[str, ...],
+                   *, ersten_weglassen: bool) -> None:
+        paths = half_cycle_paths(
+            schwung, stand,
+            stride=stride, height=height, steps=steps, direction=direction,
+            include_start=True,
+        )
+        if ersten_weglassen:
+            paths = {leg: pts[1:] for leg, pts in paths.items()}
+        run_multi_leg_trajectory(
+            robot, auf_gelaende(paths, schwung), rate_hz=rate_hz,
+            max_step_deg=max_step_deg, clip=clip, freeze=halt(schwung),
+        )
+        # Nur die Schwungbeine haben gerade gemessen. Wer nicht angehalten
+        # hat, ist regulaer bis in die Standpose durchgefedert -- seine Hoehe
+        # faellt damit auf 0 zurueck. Genau so verlaesst ein Bein die Stufe,
+        # ohne dass wir "Stufe zu Ende" gesondert erkennen muessen.
+        for leg in schwung:
+            bodenhoehe[leg] = roh.get(leg, 0.0)
+        auswerten(schwung)
+
     for _ in range(cycles):
         # Halbzyklus 1: A schwingt, B steht. include_start fuer stetigen
-        # Boden-Kontaktpunkt; danach Duplikat am Uebergang ueberspringen.
-        paths = half_cycle_paths(
-            GROUP_A, GROUP_B,
-            stride=stride, height=height, steps=steps, direction=direction,
-            include_start=True,
-        )
-        run_multi_leg_trajectory(
-            robot, paths, rate_hz=rate_hz, max_step_deg=max_step_deg, clip=clip,
-            freeze=halt(GROUP_A),
-        )
-        auswerten(GROUP_A)
-
+        # Boden-Kontaktpunkt.
+        halbzyklus(GROUP_A, GROUP_B, ersten_weglassen=False)
         # Halbzyklus 2: B schwingt, A steht. Ersten Punkt weglassen, da er
         # mit dem letzten Punkt von H1 identisch ist (kontinuierlicher Boden).
-        paths = half_cycle_paths(
-            GROUP_B, GROUP_A,
-            stride=stride, height=height, steps=steps, direction=direction,
-            include_start=True,
-        )
-        paths = {leg: pts[1:] for leg, pts in paths.items()}
-        run_multi_leg_trajectory(
-            robot, paths, rate_hz=rate_hz, max_step_deg=max_step_deg, clip=clip,
-            freeze=halt(GROUP_B),
-        )
-        auswerten(GROUP_B)
+        halbzyklus(GROUP_B, GROUP_A, ersten_weglassen=True)
 
     return gelaende
