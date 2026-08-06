@@ -15,12 +15,14 @@ Geometrie (relativ zum Coxa-Gelenk, das beim aufliegenden Bauch ~20mm
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from hexapod.gait.trajectory import Vec3, linear_path
 from hexapod.kinematics.leg_ik import forward_kinematics
 
 if TYPE_CHECKING:
+    from hexapod.drivers.foot_sensor import FootSensorArray
     from hexapod.kinematics.body_ik import BodyPose
     from hexapod.robot.hexapod import Hexapod
 
@@ -253,7 +255,8 @@ def settle_to_stance(
     pause: float = 0.1,
     clip: bool = True,
     force: bool = False,
-) -> None:
+    touch_level: float | None = None,
+) -> dict[str, float]:
     """Bringt alle Beine EINZELN nacheinander sauber in die Standpose.
 
     Vertrag: Der Roboter steht bereits auf allen sechs Beinen ungefähr auf
@@ -274,6 +277,17 @@ def settle_to_stance(
         max_step_deg: Max. Gelenksprung pro Takt.
         pause: Pause zwischen den Beinen in Sekunden.
         clip: Winkel-Clipping.
+        touch_level: Aufsetz-Erkennung. Ist ein Wert gesetzt und hat das Bein
+            einen kalibrierten Fußsensor, bricht die Absetzbewegung ab, sobald
+            der Federweg diese Schwelle erreicht — das Bein bleibt stehen, wo
+            es Boden gefunden hat, statt blind auf Standpose-Höhe zu fahren.
+            Damit findet der Roboter auf unebenem Untergrund den Boden, statt
+            ihn anzunehmen. Ohne Wert (Default) bleibt das Verhalten exakt
+            wie bisher.
+
+            Sinnvolle Groessenordnung: im Sechsbeinstand liegen die Beine bei
+            12 bis 27 % Federweg, das Rauschen bei rund 2 %. Etwa 5 % trennt
+            also sauber zwischen "beruehrt" und "traegt".
         force: Auch Beine anheben, die schon (fast) in der Standpose stehen.
             Normalerweise werden die übersprungen — das spart Bewegung, wenn
             ohnehin nichts zu tun ist. Für den Lastabgleich ist genau das
@@ -298,6 +312,7 @@ def settle_to_stance(
             if leg not in order:
                 order.append(leg)
 
+    frueh: dict[str, float] = {}
     for leg in order:
         cx, cy, cz = robot.current_offset(leg)
 
@@ -322,12 +337,37 @@ def settle_to_stance(
         seg2 = linear_path(p_lift, p_over, max(2, int(abs(cx) + abs(cy))))
         seg3 = linear_path(p_over, p_down, max(2, int(lift_z)))
 
-        points = seg1 + seg2 + seg3
+        # Hin- und Absetzbahn getrennt: die Kontaktabfrage darf erst beim
+        # Absenken greifen. Beim Anheben liegt das Bein ja noch auf und wuerde
+        # sofort ausloesen.
         run_single_leg_trajectory(
-            robot, leg, points,
+            robot, leg, seg1 + seg2,
             rate_hz=rate_hz, max_step_deg=max_step_deg, clip=clip,
         )
+
+        stop: Callable[[], bool] | None = None
+        sensors = robot.foot_sensors
+        if (touch_level is not None and sensors is not None
+                and sensors.has_sensor(leg)):
+            def stop(_leg: str = leg, _s: FootSensorArray = sensors) -> bool:
+                messwert = _s.read(_leg, samples=1)
+                return messwert.level is not None and messwert.level >= touch_level
+
+        run_single_leg_trajectory(
+            robot, leg, seg3,
+            rate_hz=rate_hz, max_step_deg=max_step_deg, clip=clip,
+            should_stop=stop,
+        )
+
+        # Wo ist das Bein tatsaechlich stehengeblieben? Bei erkanntem Kontakt
+        # ueber der Standpose -- genau die Information, die der Aufrufer
+        # braucht, wenn er wissen will, wie uneben der Boden war.
+        rest_z = robot.current_offset(leg)[2]
+        if touch_level is not None and abs(rest_z) > 0.5:
+            frueh[leg] = rest_z
         time.sleep(pause)
+
+    return frueh
 
 
 def move_to_body_pose(

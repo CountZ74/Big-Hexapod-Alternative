@@ -17,12 +17,15 @@ den erlaubten Maximalwinkel überschreitet.
 
 from __future__ import annotations
 
+import logging
 import math
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING
 
 from hexapod.gait.trajectory import Vec3, lerp
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from hexapod.robot.hexapod import Hexapod
@@ -88,6 +91,7 @@ def run_single_leg_trajectory(
     rate_hz: float = 50.0,
     max_step_deg: float = 3.0,
     clip: bool = True,
+    should_stop: Callable[[], bool] | None = None,
 ) -> None:
     """Führe eine Trajektorie für ein einzelnes Bein zeitgesteuert aus.
 
@@ -99,6 +103,8 @@ def run_single_leg_trajectory(
         max_step_deg: Maximaler Gelenkwinkel-Sprung pro Takt (Grad). Größere
             Abschnitte werden automatisch unterteilt. 0 = keine Unterteilung.
         clip: Winkel-Clipping an Servo-Grenzen.
+        should_stop: Wird vor jedem Takt gefragt. Liefert sie True, bricht
+            die Bahn ab — das Bein bleibt stehen, wo es gerade ist.
     """
     run_multi_leg_trajectory(
         robot,
@@ -106,6 +112,7 @@ def run_single_leg_trajectory(
         rate_hz=rate_hz,
         max_step_deg=max_step_deg,
         clip=clip,
+        should_stop=should_stop,
     )
 
 
@@ -117,6 +124,7 @@ def run_multi_leg_trajectory(
     max_step_deg: float = 3.0,
     clip: bool = True,
     start: Mapping[str, Vec3] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> None:
     """Führe synchron Trajektorien für mehrere Beine aus.
 
@@ -131,6 +139,9 @@ def run_multi_leg_trajectory(
         rate_hz: Sende-Frequenz in Hz.
         max_step_deg: Maximaler Gelenksprung pro Takt (Grad). 0 = aus.
         clip: Winkel-Clipping.
+        should_stop: Wird VOR jedem Takt gefragt. Liefert sie True, bricht
+            die Bahn ab. Bewusst vorher: beim Absetzen soll das Bein bei
+            erkanntem Bodenkontakt nicht noch einen Takt tiefer druecken.
     """
     if not leg_points:
         return
@@ -164,6 +175,9 @@ def run_multi_leg_trajectory(
 
     dt = 1.0 / rate_hz
     for frame in frames:
+        if should_stop is not None and should_stop():
+            logger.debug("Trajektorie vorzeitig beendet (should_stop)")
+            break
         t_start = time.perf_counter()
         robot.set_all_foot_offsets(frame, clip=clip)
         elapsed = time.perf_counter() - t_start

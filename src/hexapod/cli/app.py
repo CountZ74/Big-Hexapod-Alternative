@@ -224,6 +224,20 @@ def foot_linearity_cmd(
     run_foot_linearity(config, lift_mm=lift_mm)
 
 
+@app.command("settle")
+def settle_cmd(
+    config: Path = _CONFIG_OPT,
+    touch: float | None = typer.Option(
+        None, "--touch",
+        help="Aufsetz-Erkennung ab diesem Federweg in Prozent (z.B. 5)",
+    ),
+    lift_mm: float = typer.Option(15.0, "--lift-mm", help="Hubhöhe je Bein"),
+) -> None:
+    """Beine einzeln anheben und absetzen, optional mit Aufsetz-Erkennung."""
+    from .settle import run_settle
+    run_settle(config, touch_percent=touch, lift_mm=lift_mm)
+
+
 @app.command("status")
 def status() -> None:
     """Zeigt den aktuellen Roboter-Status."""
