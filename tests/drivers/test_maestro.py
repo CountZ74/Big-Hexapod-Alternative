@@ -282,3 +282,57 @@ class TestInitSpeedAccel:
         MaestroDriver(port="/dev/fake", num_channels=4, ser=fake)
         assert len(fake.written) == 4 * 4 * 2
         assert bytes(fake.written[:4]) == bytes([CMD_SET_SPEED, 0, 0, 0])
+
+
+class TestPrimeMitEingaengen:
+    """prime() auf einem Board, das Servos UND Sensoren traegt.
+
+    Auf einem als Input konfigurierten Kanal liefert Get Position den
+    ADC-Wert statt einer Pulsweite. Wuerde prime() den zurueckschreiben,
+    bricht der Kaltstart mit einem Plausibilitaetsfehler ab.
+    """
+
+    def _driver(self, fake: FakeSerial) -> MaestroDriver:
+        return MaestroDriver(
+            port="/dev/fake", num_channels=4, ser=fake,
+            initial_speed=None, initial_acceleration=None,
+        )
+
+    def test_uebersprungener_kanal_wird_gar_nicht_angefasst(self) -> None:
+        fake = FakeSerial()
+        driver = self._driver(fake)
+        # Antworten fuer ch1..3: alle 0 (kein Puls)
+        for _ in range(3):
+            fake.queue_response(0, 0)
+        fake.clear_written()
+        driver.prime(skip={0})
+        # Kein einziges Get Position auf Kanal 0
+        assert bytes([CMD_GET_POSITION, 0]) not in bytes(fake.written)
+        # Aber sehr wohl auf den anderen
+        assert bytes([CMD_GET_POSITION, 1]) in bytes(fake.written)
+
+    def test_adc_wert_wird_uebersprungen_statt_zu_werfen(self) -> None:
+        """Ein vergessener Eingang darf den Kaltstart nicht abbrechen."""
+        fake = FakeSerial()
+        driver = self._driver(fake)
+        # ch0: 533 (ADC-Wert eines Sensors) -> 133.25 us, keine Pulsweite.
+        # Antworten sind little-endian 16 Bit, nicht 7-Bit-kodiert wie Kommandos.
+        fake.queue_response(533 & 0xFF, 533 >> 8)
+        # ch1..3: 0 = kein Puls
+        for _ in range(3):
+            fake.queue_response(0, 0)
+        fake.clear_written()
+        n = driver.prime()   # bewusst ohne skip
+        assert n == 0        # nichts geprimet, aber auch keine Exception
+        # und vor allem: kein Set-Target gesendet
+        assert CMD_SET_TARGET not in set(fake.written)
+
+    def test_gueltige_pulsweite_wird_geprimet(self) -> None:
+        fake = FakeSerial()
+        driver = self._driver(fake)
+        fake.queue_response(6000 & 0xFF, 6000 >> 8)   # ch0 = 1500 us
+        for _ in range(3):
+            fake.queue_response(0, 0)
+        fake.clear_written()
+        assert driver.prime() == 1
+        assert CMD_SET_TARGET in set(fake.written)

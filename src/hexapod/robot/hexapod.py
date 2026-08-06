@@ -536,12 +536,18 @@ class Hexapod:
         Returns:
             Anzahl geprimeter Kanäle (0 wenn der Driver es nicht unterstützt).
         """
+        # Sensor-Eingänge je Bus heraushalten: dort steht kein Puls, sondern
+        # ein ADC-Wert, den man nicht als Target zurückschreiben darf.
+        inputs: dict[str, set[int]] = {}
+        for sensor in self._config.foot_sensors.sensors:
+            inputs.setdefault(sensor.bus, set()).add(sensor.channel)
+
         total = 0
         for bus, driver in self._drivers.items():
             prime_fn = getattr(driver, "prime", None)
             if prime_fn is None:
                 continue
-            n: int = prime_fn()
+            n: int = prime_fn(skip=inputs.get(bus, set()))
             logger.debug("prime(%s): %d Kanäle", bus, n)
             total += n
         logger.info("prime(): %d Kanäle vorbereitet", total)

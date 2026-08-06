@@ -11,7 +11,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import threading
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 
 import serial
 
@@ -255,7 +255,7 @@ class MaestroDriver(ServoDriver):
             )
         return self._decode_response_16bit(raw[0], raw[1])
 
-    def prime(self) -> int:
+    def prime(self, skip: Collection[int] = ()) -> int:
         """Bereite sanftes Anfahren vor (gegen ungebremsten ersten Zug).
 
         Der Maestro fährt den allerersten Set-Target-Befehl nach einem
@@ -270,15 +270,37 @@ class MaestroDriver(ServoDriver):
         seine intern gespeicherte Position noch der echten entspricht. Kanäle
         mit Position 0 (deaktiviert/aus) werden übersprungen.
 
+        WICHTIG bei gemischt belegten Boards: Auf einem als *Input*
+        konfigurierten Kanal liefert "Get Position" keinen Puls, sondern den
+        ADC-Wert 0..1023 — nach der Umrechnung also 0..256 µs. Das ist keine
+        gültige Pulsweite und darf auf gar keinen Fall zurückgeschrieben
+        werden. Solche Kanäle gehören in `skip`; zusätzlich werden Werte
+        außerhalb der plausiblen Pulsgrenzen sicherheitshalber übersprungen
+        statt zu werfen, damit ein vergessener Eintrag den Kaltstart nicht
+        abbricht.
+
+        Args:
+            skip: Kanäle, die nicht angefasst werden (z.B. Sensor-Eingänge).
+
         Returns:
             Anzahl der geprimeten (aktiven) Kanäle.
         """
         self._check_open()
+        skip_set = set(skip)
         primed = 0
         for ch in range(self._num_channels):
+            if ch in skip_set:
+                continue
             pos = self.get_position(ch)
             if pos <= 0.0:
                 continue  # deaktivierter Kanal, kein Puls
+            if not (self._min_pulse_us <= pos <= self._max_pulse_us):
+                logger.warning(
+                    "prime: Kanal %d liefert %.1f us — keine plausible Pulsweite, "
+                    "vermutlich ein Eingang. Wird uebersprungen.",
+                    ch, pos,
+                )
+                continue
             # Exakt dieselbe Position als ersten Set-Target zurückschreiben.
             self.set_position(ch, pos)
             primed += 1
