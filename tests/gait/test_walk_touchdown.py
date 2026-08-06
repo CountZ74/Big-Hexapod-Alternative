@@ -78,13 +78,13 @@ def test_ebener_boden_loest_nicht_aus(sim_hexapod: Hexapod) -> None:
 
 def test_hindernis_haelt_nur_das_betroffene_bein(sim_hexapod: Hexapod) -> None:
     hoehen = dict.fromkeys(sim_hexapod.leg_names, 0.0)
-    hoehen["mid_left"] = 12.0          # mid_left gehoert zu GROUP_A
+    hoehen["mid_left"] = 20.0          # mid_left gehoert zu GROUP_A
     _boden(sim_hexapod, hoehen)
 
     treffer = walk(sim_hexapod, cycles=1, rate_hz=500.0, steps=10, touch_level=0.05)
 
     assert "mid_left" in treffer
-    assert treffer["mid_left"] > 5.0
+    assert treffer["mid_left"] > 12.0
     # Die beiden anderen der Gruppe sind unbehelligt geblieben
     for leg in GROUP_A:
         if leg != "mid_left":
@@ -94,19 +94,21 @@ def test_hindernis_haelt_nur_das_betroffene_bein(sim_hexapod: Hexapod) -> None:
 def test_gemessene_hoehe_passt_zum_hindernis(sim_hexapod: Hexapod) -> None:
     """Die zurueckgegebene Hoehe ist die Gelaendehoehe an dieser Stelle."""
     hoehen = dict.fromkeys(sim_hexapod.leg_names, 0.0)
-    hoehen["front_left"] = 10.0        # front_left gehoert zu GROUP_B
+    hoehen["front_left"] = 20.0        # front_left gehoert zu GROUP_B
     _boden(sim_hexapod, hoehen)
 
     treffer = walk(sim_hexapod, cycles=1, rate_hz=500.0, steps=12, touch_level=0.05)
 
     assert "front_left" in treffer
-    assert 8.0 < treffer["front_left"] < 12.5, treffer["front_left"]
+    # Etwas mehr als die Klotzhoehe: der Sensor meldet Kontakt schon,
+    # waehrend die Feder noch nachgibt.
+    assert 18.0 < treffer["front_left"] < 25.0, treffer["front_left"]
 
 
 def test_beide_gruppen_werden_geprueft(sim_hexapod: Hexapod) -> None:
     hoehen = dict.fromkeys(sim_hexapod.leg_names, 0.0)
-    hoehen[GROUP_A[0]] = 11.0
-    hoehen[GROUP_B[0]] = 11.0
+    hoehen[GROUP_A[0]] = 20.0
+    hoehen[GROUP_B[0]] = 20.0
     _boden(sim_hexapod, hoehen)
 
     treffer = walk(sim_hexapod, cycles=1, rate_hz=500.0, steps=10, touch_level=0.05)
@@ -117,7 +119,7 @@ def test_beide_gruppen_werden_geprueft(sim_hexapod: Hexapod) -> None:
 def test_gang_laeuft_nach_dem_hindernis_weiter(sim_hexapod: Hexapod) -> None:
     """Ein eingefrorenes Bein darf den Zyklus nicht abbrechen."""
     hoehen = dict.fromkeys(sim_hexapod.leg_names, 0.0)
-    hoehen["mid_left"] = 12.0
+    hoehen["mid_left"] = 20.0
     _boden(sim_hexapod, hoehen)
 
     walk(sim_hexapod, cycles=2, rate_hz=500.0, steps=8, touch_level=0.05)
@@ -185,3 +187,33 @@ def test_hindernis_hebt_sich_von_der_gruppe_ab(sim_hexapod: Hexapod) -> None:
     # Tiefpass -- sie gleicht kleine Unebenheiten aus, und genau deshalb
     # setzt die Erkennung frueher an, als der Klotz hoch ist.
     assert gelaende["front_left"] > 9.0, gelaende["front_left"]
+
+
+def test_normales_bein_wird_nicht_als_loch_gemeldet(sim_hexapod: Hexapod) -> None:
+    """Am Roboter gemessen: back_right +6.2 mm, mid_right -6.2 mm, ohne Hindernis.
+
+    Die -6.2 entstanden, weil zwei Beine der Gruppe auf dem systematischen
+    Kontaktniveau angehalten hatten und das dritte regulaer durchgefedert
+    war. Gegen diesen Median sah das normale Bein aus wie ein Loch.
+    """
+    hoehen = dict.fromkeys(sim_hexapod.leg_names, 0.0)
+    for leg in ("front_left", "back_left"):
+        hoehen[leg] = 14.0
+    _boden(sim_hexapod, hoehen)
+
+    gelaende = walk(sim_hexapod, cycles=1, rate_hz=500.0, steps=40,
+                    touch_level=0.05, height=30.0, touch_margin_mm=10.0)
+
+    assert "mid_right" not in gelaende, gelaende
+    # Dass die beiden Stufenbeine hier NICHT gemeldet werden, ist die Kehrseite
+    # des Gruppenbezugs: stehen zwei von drei Beinen auf derselben Stufe, ist
+    # sie der Median und damit definitionsgemaess "der Boden". Ein relatives
+    # Mass kann das nicht aufloesen -- dafuer braucht es den MPU6050.
+
+
+def test_ebener_boden_meldet_nichts_mit_der_gang_grenze(sim_hexapod: Hexapod) -> None:
+    """Mit der gemessenen Grenze loest das Absacken beim Schwung nicht aus."""
+    _boden(sim_hexapod, dict.fromkeys(sim_hexapod.leg_names, 0.0),
+           nachsinken_mm=6.2)
+    assert walk(sim_hexapod, cycles=2, rate_hz=500.0, steps=40,
+                touch_level=0.05, height=30.0) == {}

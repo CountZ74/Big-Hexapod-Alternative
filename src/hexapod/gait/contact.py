@@ -31,6 +31,17 @@ if TYPE_CHECKING:
 # Koerper sackt weiter nach, und der erste Kontakt liegt entsprechend hoeher.
 # Eine feste Grenze taugt dort nicht -- siehe make_contact_freeze.
 DEFAULT_MARGIN_MM = 5.0
+
+# Im Gang liegt der erste Kontakt deutlich hoeher. Waehrend eine
+# Tripod-Gruppe schwingt, tragen nur drei Beine -- der Koerper sackt ab, und
+# der Fuss findet den Boden entsprechend frueher.
+#
+# Gemessen am Roboter auf ebenem Boden (walk --touch 5): die Beine hielten
+# bei rund 6,2 mm ueber der Standpose an. Die 5 mm lagen mitten in diesem
+# Bereich, deshalb hielt mal das eine, mal das andere Bein an. 12 mm laesst
+# normales Absetzen sicher durch; Stufen darunter fangen ohnehin die Federn
+# ab, die knapp 6 mm Weg haben.
+DEFAULT_WALK_MARGIN_MM = 12.0
 # Im Sechsbeinstand liegen die Beine bei 12 bis 27 % Federweg, das Rauschen
 # bei rund 2 %. 5 % trennt sauber zwischen "berührt" und "trägt".
 DEFAULT_TOUCH_LEVEL = 0.05

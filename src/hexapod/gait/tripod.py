@@ -16,7 +16,7 @@ import statistics
 from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
-from hexapod.gait.contact import DEFAULT_MARGIN_MM, make_contact_freeze
+from hexapod.gait.contact import DEFAULT_WALK_MARGIN_MM, make_contact_freeze
 from hexapod.gait.executor import run_multi_leg_trajectory
 from hexapod.gait.trajectory import Vec3, stance_path, swing_path
 
@@ -83,7 +83,7 @@ def walk(
     direction: float = 1.0,
     clip: bool = True,
     touch_level: float | None = None,
-    touch_margin_mm: float = DEFAULT_MARGIN_MM,
+    touch_margin_mm: float = DEFAULT_WALK_MARGIN_MM,
 ) -> dict[str, float]:
     """Laufe `cycles` volle Tripod-Zyklen.
 
@@ -142,8 +142,15 @@ def walk(
         werte = {leg: roh.get(leg, 0.0) for leg in gruppe}
         mitte = statistics.median(werte.values())
         for leg, hoehe in werte.items():
+            if leg not in roh:
+                # Nicht angehalten heisst: regulaer bis in die Standpose
+                # durchgefedert. Das ist kein Loch. Ein Loch waere "gar kein
+                # Kontakt bis zum Bahnende" -- das erkennt walk() nicht, und
+                # ein Bein hier als Loch zu melden, nur weil die anderen auf
+                # einer Stufe standen, waere schlicht falsch.
+                continue
             abweichung = hoehe - mitte
-            if abs(abweichung) > 1.0:
+            if abweichung > 1.0:
                 gelaende[leg] = abweichung
 
     for _ in range(cycles):
