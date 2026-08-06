@@ -243,6 +243,18 @@ def settle_cmd(
                lift_mm=lift_mm)
 
 
+@app.command("foot-sweep")
+def foot_sweep_cmd(
+    config: Path = _CONFIG_OPT,
+    leg: str = typer.Option("front_left", "--leg", "-l", help="Welches Bein"),
+    max_mm: float = typer.Option(12.0, "--max-mm", help="Maximale Auslenkung nach unten"),
+    schritt_mm: float = typer.Option(1.0, "--step-mm", help="Schrittweite"),
+) -> None:
+    """Kennlinie eines Fußsensors unter Last aufnehmen (BEWEGT SERVOS)."""
+    from .sweep import run_foot_sweep
+    run_foot_sweep(config, leg=leg, max_mm=max_mm, schritt_mm=schritt_mm)
+
+
 @app.command("status")
 def status() -> None:
     """Zeigt den aktuellen Roboter-Status."""
