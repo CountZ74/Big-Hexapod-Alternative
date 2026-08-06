@@ -212,6 +212,18 @@ def auto_trim_cmd(
     )
 
 
+@app.command("foot-linearity")
+def foot_linearity_cmd(
+    config: Path = _CONFIG_OPT,
+    lift_mm: float = typer.Option(
+        30.0, "--lift-mm", help="Hubhöhe der angehobenen Tripod-Gruppe"
+    ),
+) -> None:
+    """Linearität der Fußsensoren prüfen: 6 gegen 3 Beine (BEWEGT SERVOS)."""
+    from .linearity import run_foot_linearity
+    run_foot_linearity(config, lift_mm=lift_mm)
+
+
 @app.command("status")
 def status() -> None:
     """Zeigt den aktuellen Roboter-Status."""
