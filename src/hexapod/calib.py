@@ -50,6 +50,11 @@ class BalanceResult:
         return max(self.residuals, key=lambda leg: abs(self.residuals[leg]))
 
     @property
+    def max_abs_residual(self) -> float:
+        """Groesster Betrag unter den Residuen — das Konvergenzmass."""
+        return max(abs(v) for v in self.residuals.values())
+
+    @property
     def spread(self) -> float:
         """Abstand zwischen groesstem und kleinstem Residuum."""
         values = self.residuals.values()
@@ -93,6 +98,7 @@ def z_trim_corrections(
     *,
     travel_mm: float,
     damping: float = 0.8,
+    deadband: float = 0.0,
 ) -> dict[str, float]:
     """Residuen in z_trim-Korrekturen umrechnen (in mm, mittelwertfrei).
 
@@ -115,13 +121,28 @@ def z_trim_corrections(
             ein Einzelfehler nur etwa zur Haelfte im Residuum landet. Deshalb
             genuegt hier ein milder Wert -- die Schleife naehert sich in
             wenigen Runden an, statt zu schwingen.
+        deadband: Residuen mit kleinerem Betrag bleiben unkorrigiert.
+            Unterhalb der Messwiederholbarkeit korrigiert man nur noch
+            Rauschen -- und weil jede Korrektur die Lastverteilung erneut
+            leicht verwuerfelt, wandert z_trim dann zufaellig weiter, statt
+            sich zu beruhigen. Beobachtet wurde eine Wiederholbarkeit von
+            rund 2 % Federweg.
+
+    Hinweis: Beine im Totband bekommen trotzdem den Ausgleichsanteil aus der
+    Mittelwertfreiheit ab. Das ist gewollt -- die Summe muss null bleiben,
+    sonst wandert die Koerperhoehe.
     """
     if travel_mm <= 0.0:
         raise ValueError(f"travel_mm muss positiv sein, war {travel_mm}")
     if not 0.0 < damping <= 1.0:
         raise ValueError(f"damping muss in (0, 1] liegen, war {damping}")
+    if deadband < 0.0:
+        raise ValueError(f"deadband darf nicht negativ sein, war {deadband}")
 
-    raw = {leg: -r * travel_mm * damping for leg, r in residuals.items()}
+    raw = {
+        leg: (0.0 if abs(r) < deadband else -r * travel_mm * damping)
+        for leg, r in residuals.items()
+    }
     offset = sum(raw.values()) / len(raw)
     return {leg: value - offset for leg, value in raw.items()}
 

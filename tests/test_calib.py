@@ -238,3 +238,47 @@ def test_lastresiduen_sehen_reine_neigung_nicht() -> None:
     neigung = tilt_corrections(0.02, 0.01, FUESSE)   # als Beinfehler gedacht
     r = fit_load_plane(_levels(fehler={k: v / 5.0 for k, v in neigung.items()}), FUESSE)
     assert max(abs(v) for v in r.residuals.values()) < 1e-9
+
+
+# ---------------------------------------------------------------------
+# Totband
+# ---------------------------------------------------------------------
+
+
+def test_totband_laesst_kleine_residuen_in_ruhe() -> None:
+    """Unter der Messgrenze wuerde man nur Rauschen korrigieren."""
+    korr = z_trim_corrections(
+        {"a": 0.10, "b": 0.01, "c": -0.01, "d": -0.10},
+        travel_mm=5.5, deadband=0.03,
+    )
+    # a und d liegen drueber und werden gegenlaeufig korrigiert
+    assert korr["a"] < -0.1 and korr["d"] > 0.1
+    # b und c bekommen nur den Ausgleich aus der Mittelwertfreiheit
+    assert abs(korr["b"]) < 0.01 and abs(korr["c"]) < 0.01
+
+
+def test_totband_bleibt_mittelwertfrei() -> None:
+    korr = z_trim_corrections(
+        {"a": 0.20, "b": 0.01, "c": 0.0, "d": 0.0},
+        travel_mm=5.5, deadband=0.03,
+    )
+    assert sum(korr.values()) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_alles_im_totband_ergibt_keine_korrektur() -> None:
+    korr = z_trim_corrections(
+        dict.fromkeys("abcd", 0.01), travel_mm=5.5, deadband=0.03
+    )
+    assert all(v == pytest.approx(0.0) for v in korr.values())
+
+
+def test_negatives_totband_wird_abgelehnt() -> None:
+    with pytest.raises(ValueError, match="deadband"):
+        z_trim_corrections({"a": 0.0, "b": 0.0}, travel_mm=5.5, deadband=-0.1)
+
+
+def test_konvergenzmass() -> None:
+    r = fit_load_plane(_levels(fehler={"front_left": 0.10}), FUESSE)
+    assert r.max_abs_residual == pytest.approx(
+        max(abs(v) for v in r.residuals.values())
+    )

@@ -50,6 +50,9 @@ MEASURE_S = 2.0
 MEASURE_INTERVAL = 0.05
 # Groesser als das darf z_trim nie werden (auch das Modell begrenzt auf 30).
 MAX_Z_TRIM_MM = 25.0
+# Standard-Totband. Gemessene Wiederholbarkeit der Lastverteilung liegt bei
+# rund 2 % Federweg -- darunter korrigiert man nur noch Rauschen.
+DEFAULT_DEADBAND = 0.03
 # Rundenprotokoll. Ohne das verschwinden die Messwerte im Terminal -- und
 # genau die braucht man, um hinterher zu beurteilen, ob eine Korrektur
 # ueberhaupt gewirkt hat.
@@ -152,6 +155,7 @@ def run_auto_trim(
     rounds: int = 4,
     travel_mm: float | None = None,
     damping: float = 0.8,
+    deadband: float = DEFAULT_DEADBAND,
     use_imu: bool = True,
 ) -> None:
     """Misst und korrigiert z_trim in mehreren Runden."""
@@ -200,6 +204,10 @@ def run_auto_trim(
             "wieder ab.\nBleib in Reichweite und schalte im Zweifel den Servostrom ab."
             "[/dim]\n"
         )
+        console.print(
+            f"[dim]Totband {deadband * 100:.1f} % — darunter wird nicht mehr "
+            f"korrigiert.[/dim]"
+        )
         if not typer.confirm("Roboter steht auf allen sechs Beinen. Starten?", default=False):
             return
 
@@ -220,7 +228,8 @@ def run_auto_trim(
             result = fit_load_plane(levels, positions)
 
             korrektur = z_trim_corrections(
-                result.residuals, travel_mm=aktueller_travel, damping=damping
+                result.residuals, travel_mm=aktueller_travel,
+                damping=damping, deadband=deadband,
             )
             if tilt is not None:
                 for leg, d in tilt_corrections(
@@ -231,6 +240,17 @@ def run_auto_trim(
             _report(runde, result, tilt, korrektur, aktueller_travel, vorrunde)
             _log(lauf_id, runde, result, tilt, korrektur, aktueller_travel, robot)
             vorrunde = dict(levels)
+
+            # Fertig, wenn nichts mehr ueber der Messgrenze liegt. Ohne dieses
+            # Kriterium ruehrt die Schleife weiter im Rauschen und laesst
+            # z_trim zufaellig wandern.
+            if result.max_abs_residual < deadband:
+                console.print(
+                    f"[green]Konvergiert: alle Residuen unter dem Totband von "
+                    f"{deadband * 100:.1f} %. Weitere Runden wuerden nur Rauschen "
+                    f"korrigieren.[/green]"
+                )
+                break
 
             # Sicherung: wird die Neigung schlechter statt besser, stimmt
             # vermutlich das Vorzeichen nicht -- dann lieber abbrechen, als

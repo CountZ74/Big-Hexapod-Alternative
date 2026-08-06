@@ -195,6 +195,10 @@ def auto_trim_cmd(
         help="Vollweg der Schubstange in mm (Default: misst sich selbst ein)",
     ),
     damping: float = typer.Option(0.8, "--damping", help="Anteil der Korrektur je Runde"),
+    deadband: float = typer.Option(
+        3.0, "--deadband",
+        help="Residuen unter diesem Prozentwert nicht mehr korrigieren",
+    ),
     imu: bool = typer.Option(
         True, "--imu/--no-imu",
         help="IMU mitverwenden (nur auf waagerechtem Boden sinnvoll)",
@@ -203,7 +207,8 @@ def auto_trim_cmd(
     """z_trim automatisch aus Fußsensoren und IMU bestimmen (BEWEGT SERVOS)."""
     from .autotrim import run_auto_trim
     run_auto_trim(
-        config, rounds=rounds, travel_mm=travel_mm, damping=damping, use_imu=imu
+        config, rounds=rounds, travel_mm=travel_mm, damping=damping,
+        deadband=deadband / 100.0, use_imu=imu,
     )
 
 
