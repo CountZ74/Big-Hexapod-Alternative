@@ -269,7 +269,7 @@ servos:
 foot_sensors:
   poll_hz: 50.0
   samples: 3
-  travel_mm: 5.5
+  level_per_mm: 0.068
   sensors:
   - leg: back_left
     bus: left

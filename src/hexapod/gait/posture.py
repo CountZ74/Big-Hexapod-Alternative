@@ -355,23 +355,23 @@ def settle_to_stance(
             rate_hz=rate_hz, max_step_deg=max_step_deg, clip=clip,
         )
 
-        stop: Callable[[], bool] | None = None
+        halt: Callable[[str], bool] | None = None
         sensors = robot.foot_sensors
         if (touch_level is not None and sensors is not None
                 and sensors.has_sensor(leg)):
-            def stop(_leg: str = leg, _s: FootSensorArray = sensors) -> bool:
-                # Nur abbrechen, solange das Bein noch deutlich ueber der
+            def halt(pruef_leg: str, _s: FootSensorArray = sensors) -> bool:
+                # Nur einfrieren, solange das Bein noch deutlich ueber der
                 # Standpose steht. Weiter unten ist Kontakt normal und
                 # erwuenscht -- dort soll es sich sauber einfedern.
-                if robot.current_offset(_leg)[2] <= touch_margin_mm:
+                if robot.current_offset(pruef_leg)[2] <= touch_margin_mm:
                     return False
-                messwert = _s.read(_leg, samples=1)
+                messwert = _s.read(pruef_leg, samples=1)
                 return messwert.level is not None and messwert.level >= touch_level
 
         run_single_leg_trajectory(
             robot, leg, seg3,
             rate_hz=rate_hz, max_step_deg=max_step_deg, clip=clip,
-            should_stop=stop,
+            freeze=halt,
         )
 
         # Wo ist das Bein tatsaechlich stehengeblieben? Bei erkanntem Kontakt

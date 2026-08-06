@@ -91,8 +91,8 @@ def run_single_leg_trajectory(
     rate_hz: float = 50.0,
     max_step_deg: float = 3.0,
     clip: bool = True,
-    should_stop: Callable[[], bool] | None = None,
-) -> None:
+    freeze: Callable[[str], bool] | None = None,
+) -> dict[str, Vec3]:
     """Führe eine Trajektorie für ein einzelnes Bein zeitgesteuert aus.
 
     Args:
@@ -103,16 +103,20 @@ def run_single_leg_trajectory(
         max_step_deg: Maximaler Gelenkwinkel-Sprung pro Takt (Grad). Größere
             Abschnitte werden automatisch unterteilt. 0 = keine Unterteilung.
         clip: Winkel-Clipping an Servo-Grenzen.
-        should_stop: Wird vor jedem Takt gefragt. Liefert sie True, bricht
-            die Bahn ab — das Bein bleibt stehen, wo es gerade ist.
+        freeze: Wird vor jedem Takt je Bein gefragt. Liefert sie True,
+            haelt das Bein seine zuletzt gesendete Position.
+
+    Returns:
+        Die eingefrorenen Beine mit der Position, auf der sie stehengeblieben
+        sind. Leer, wenn die Bahn regulaer zu Ende lief.
     """
-    run_multi_leg_trajectory(
+    return run_multi_leg_trajectory(
         robot,
         {leg_name: points},
         rate_hz=rate_hz,
         max_step_deg=max_step_deg,
         clip=clip,
-        should_stop=should_stop,
+        freeze=freeze,
     )
 
 
@@ -124,8 +128,8 @@ def run_multi_leg_trajectory(
     max_step_deg: float = 3.0,
     clip: bool = True,
     start: Mapping[str, Vec3] | None = None,
-    should_stop: Callable[[], bool] | None = None,
-) -> None:
+    freeze: Callable[[str], bool] | None = None,
+) -> dict[str, Vec3]:
     """Führe synchron Trajektorien für mehrere Beine aus.
 
     Alle Trajektorien müssen gleiche Länge haben. Vor dem Senden wird die
@@ -139,12 +143,21 @@ def run_multi_leg_trajectory(
         rate_hz: Sende-Frequenz in Hz.
         max_step_deg: Maximaler Gelenksprung pro Takt (Grad). 0 = aus.
         clip: Winkel-Clipping.
-        should_stop: Wird VOR jedem Takt gefragt. Liefert sie True, bricht
-            die Bahn ab. Bewusst vorher: beim Absetzen soll das Bein bei
-            erkanntem Bodenkontakt nicht noch einen Takt tiefer druecken.
+        freeze: Wird VOR jedem Takt fuer jedes noch laufende Bein gefragt.
+            Liefert sie True, haelt dieses Bein von da an seine zuletzt
+            gesendete Position, waehrend die uebrigen ihre Bahn zu Ende
+            fahren.
+
+            Bewusst pro Bein statt global: im Tripod schwingen drei Beine
+            gleichzeitig, und wenn eines frueher Boden findet, sollen die
+            anderen weiterlaufen. Und bewusst VOR dem Senden — bei erkanntem
+            Kontakt soll nicht noch einen Takt tiefer gedrueckt werden.
+
+    Returns:
+        Die eingefrorenen Beine mit ihrer Halteposition.
     """
     if not leg_points:
-        return
+        return {}
     lengths = {len(pts) for pts in leg_points.values()}
     if len(lengths) != 1:
         raise ValueError(
@@ -174,13 +187,26 @@ def run_multi_leg_trajectory(
         ]
 
     dt = 1.0 / rate_hz
+    gehalten: dict[str, Vec3] = {}
+    zuletzt: dict[str, Vec3] = {}
     for frame in frames:
-        if should_stop is not None and should_stop():
-            logger.debug("Trajektorie vorzeitig beendet (should_stop)")
-            break
+        if freeze is not None:
+            for leg in legs:
+                if leg not in gehalten and freeze(leg):
+                    # Auf der zuletzt GESENDETEN Position halten, nicht auf der
+                    # naechsten -- sonst faehrt das Bein noch einen Takt weiter.
+                    gehalten[leg] = zuletzt.get(leg, frame[leg])
+                    logger.debug("%s eingefroren bei %s", leg, gehalten[leg])
+            if len(gehalten) == len(legs):
+                break   # nichts mehr zu fahren
+
+        ziel = {leg: gehalten.get(leg, frame[leg]) for leg in legs}
         t_start = time.perf_counter()
-        robot.set_all_foot_offsets(frame, clip=clip)
+        robot.set_all_foot_offsets(ziel, clip=clip)
+        zuletzt = ziel
         elapsed = time.perf_counter() - t_start
         sleep = dt - elapsed
         if sleep > 0:
             time.sleep(sleep)
+
+    return gehalten

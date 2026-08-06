@@ -283,16 +283,25 @@ class FootSensorsConfig(StrictBase):
 
     poll_hz: float = Field(default=50.0, gt=0.0, le=200.0)
     samples: int = Field(default=3, ge=1, le=15)
-    travel_mm: float | None = Field(
+    level_per_mm: float | None = Field(
         default=None,
         gt=0.0,
-        le=50.0,
+        le=1.0,
         description=(
-            "Mechanischer Vollweg der Schubstange in mm — die Strecke, die "
-            "raw_unloaded von raw_full trennt. Rechnet Federweg-Anteile in "
-            "Millimeter um, was der Bein-Hoehenabgleich braucht. Eine "
-            "Konstruktionsgroesse, die man einmal misst; fehlt sie, muss "
-            "das Werkzeug sie schaetzen, und das ist deutlich unzuverlaessiger."
+            "Empfindlichkeit am Arbeitspunkt: wieviel Federweg-Anteil (0..1) "
+            "eine Aenderung von z_trim um einen Millimeter erzeugt. Genau "
+            "diese Groesse braucht der Bein-Hoehenabgleich, um Residuen in "
+            "Korrekturen umzurechnen.\n\n"
+            "Das ist NICHT der mechanische Weg der Schubstange. Der ist eine "
+            "Konstruktionsgroesse (hier 5,5 mm) und waere nur dann derselbe "
+            "Wert, wenn der Sensor linear ueber diesen Weg messen wuerde. Tut "
+            "er nicht: das Magnetfeld faellt stark mit dem Abstand, die "
+            "Kennlinie ist eine S-Kurve mit flachem Anfang. Dazu weicht der "
+            "Koerper beim Druecken nach oben aus, weil die uebrigen Beine "
+            "nachgeben. Gemessen wurden am Arbeitspunkt rund 0,068 statt der "
+            "0,18, die sich aus 5,5 mm rein rechnerisch ergaeben.\n\n"
+            "Fehlt der Wert, schaetzt das Werkzeug ihn aus der Reaktion auf "
+            "die erste Korrektur — das funktioniert, ist aber ungenauer."
         ),
     )
     sensors: list[FootSensorConfig] = Field(default_factory=list)

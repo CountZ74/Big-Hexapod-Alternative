@@ -190,9 +190,9 @@ def foot_calibrate_cmd(
 def auto_trim_cmd(
     config: Path = _CONFIG_OPT,
     rounds: int = typer.Option(4, "--rounds", "-n", help="Anzahl Mess-/Korrekturrunden"),
-    travel_mm: float | None = typer.Option(
-        None, "--travel-mm",
-        help="Vollweg der Schubstange in mm (Default: misst sich selbst ein)",
+    level_per_mm: float | None = typer.Option(
+        None, "--level-per-mm",
+        help="Federweg-Anteil je mm z_trim (Default: aus robot.yaml oder geschätzt)",
     ),
     damping: float = typer.Option(0.8, "--damping", help="Anteil der Korrektur je Runde"),
     deadband: float = typer.Option(
@@ -207,7 +207,7 @@ def auto_trim_cmd(
     """z_trim automatisch aus Fußsensoren und IMU bestimmen (BEWEGT SERVOS)."""
     from .autotrim import run_auto_trim
     run_auto_trim(
-        config, rounds=rounds, travel_mm=travel_mm, damping=damping,
+        config, rounds=rounds, level_per_mm=level_per_mm, damping=damping,
         deadband=deadband / 100.0, use_imu=imu,
     )
 

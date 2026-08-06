@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from hexapod.calib import (
-    estimate_travel_mm,
+    estimate_level_per_mm,
     fit_load_plane,
     z_trim_corrections,
 )
@@ -103,7 +103,7 @@ def test_zu_wenige_beine() -> None:
 
 def test_korrektur_wirkt_dem_residuum_entgegen() -> None:
     korr = z_trim_corrections({"a": 0.10, "b": -0.10, "c": 0.0, "d": 0.0},
-                              travel_mm=5.0, damping=1.0)
+                              level_per_mm=0.2, damping=1.0)
     assert korr["a"] < 0    # traegt zu viel -> Fuss hoeher
     assert korr["b"] > 0    # traegt zu wenig -> Fuss tiefer
 
@@ -111,23 +111,23 @@ def test_korrektur_wirkt_dem_residuum_entgegen() -> None:
 def test_korrektur_ist_mittelwertfrei() -> None:
     """Sonst wandert der ganze Koerper hoch oder runter."""
     korr = z_trim_corrections({"a": 0.30, "b": 0.20, "c": 0.10, "d": 0.0},
-                              travel_mm=5.0)
+                              level_per_mm=0.2)
     assert sum(korr.values()) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_daempfung_skaliert_die_korrektur() -> None:
     voll = z_trim_corrections({"a": 0.1, "b": -0.1, "c": 0.0, "d": 0.0},
-                              travel_mm=5.0, damping=1.0)
+                              level_per_mm=0.2, damping=1.0)
     halb = z_trim_corrections({"a": 0.1, "b": -0.1, "c": 0.0, "d": 0.0},
-                              travel_mm=5.0, damping=0.5)
+                              level_per_mm=0.2, damping=0.5)
     assert halb["a"] == pytest.approx(voll["a"] * 0.5)
 
 
 def test_unsinnige_parameter() -> None:
-    with pytest.raises(ValueError, match="travel_mm"):
-        z_trim_corrections({"a": 0.0, "b": 0.0}, travel_mm=0.0)
+    with pytest.raises(ValueError, match="level_per_mm"):
+        z_trim_corrections({"a": 0.0, "b": 0.0}, level_per_mm=0.0)
     with pytest.raises(ValueError, match="damping"):
-        z_trim_corrections({"a": 0.0, "b": 0.0}, travel_mm=5.0, damping=1.5)
+        z_trim_corrections({"a": 0.0, "b": 0.0}, level_per_mm=0.2, damping=1.5)
 
 
 # ---------------------------------------------------------------------
@@ -135,18 +135,18 @@ def test_unsinnige_parameter() -> None:
 # ---------------------------------------------------------------------
 
 
-def test_vollweg_wird_zurueckgerechnet() -> None:
-    """1 mm z_trim erzeugt 0.2 Federweg -> Vollweg 5 mm."""
-    got = estimate_travel_mm(
+def test_empfindlichkeit_wird_zurueckgerechnet() -> None:
+    """1 mm z_trim erzeugt 0.2 Federweg -> 0.2 je mm."""
+    got = estimate_level_per_mm(
         {"a": 1.0, "b": -1.0, "c": 0.5},
         {"a": 0.20, "b": 0.20, "c": 0.20},
         {"a": 0.40, "b": 0.00, "c": 0.30},
     )
-    assert got == pytest.approx(5.0)
+    assert got == pytest.approx(0.2)
 
 
 def test_zu_kleine_schritte_liefern_keine_schaetzung() -> None:
-    assert estimate_travel_mm(
+    assert estimate_level_per_mm(
         {"a": 0.001, "b": -0.001, "c": 0.0},
         {"a": 0.2, "b": 0.2, "c": 0.2},
         {"a": 0.2, "b": 0.2, "c": 0.2},
@@ -154,22 +154,23 @@ def test_zu_kleine_schritte_liefern_keine_schaetzung() -> None:
 
 
 def test_verrauschte_reaktion_sprengt_die_schaetzung_nicht() -> None:
-    """Der Fall, der einmal 15 mm statt 5,5 mm geliefert hat.
+    """Ein Bein reagiert kaum.
 
-    Ein Bein reagiert kaum -- als Median von Quotienten waere das ein
-    riesiger Ausreisser. Die Regression gewichtet es klein.
+    Als Median von Quotienten waere das ein riesiger Ausreisser -- genau
+    daran ist die Schaetzung einmal um Faktor drei danebengegangen. Die
+    Regression gewichtet den Ausreisser klein.
     """
-    got = estimate_travel_mm(
+    got = estimate_level_per_mm(
         {"a": 1.0, "b": -1.0, "c": 0.5, "d": -0.5},
         dict.fromkeys("abcd", 0.20),
         {"a": 0.38, "b": 0.02, "c": 0.29, "d": 0.199},   # d fast keine Reaktion
     )
     assert got is not None
-    assert 4.5 < got < 6.5, got
+    assert 0.15 < got < 0.25, got
 
 
 def test_gegenlaeufige_reaktion_wird_verworfen() -> None:
-    assert estimate_travel_mm(
+    assert estimate_level_per_mm(
         {"a": 1.0, "b": -1.0, "c": 0.5},
         dict.fromkeys("abc", 0.20),
         {"a": 0.10, "b": 0.30, "c": 0.15},   # falsche Richtung
@@ -185,17 +186,17 @@ def test_schleife_konvergiert() -> None:
     -- er ist von Schwerpunkt und Bodenneigung nicht unterscheidbar. Alles
     Uebrige faellt mit (1 - damping) je Runde.
     """
-    travel = 5.0
+    empfindlichkeit = 0.2
     fehler = {"front_left": 0.10, "back_right": -0.06}
     z_trim = dict.fromkeys(FUESSE, 0.0)
 
     verlauf = []
     for _ in range(6):
         # z_trim wirkt wie ein zusaetzlicher Beinlaengenfehler
-        eff = {leg: fehler.get(leg, 0.0) + z_trim[leg] / travel for leg in FUESSE}
+        eff = {leg: fehler.get(leg, 0.0) + z_trim[leg] * empfindlichkeit for leg in FUESSE}
         r = fit_load_plane(_levels(a=0.001, fehler=eff), FUESSE)
         verlauf.append(r.spread)
-        for leg, d in z_trim_corrections(r.residuals, travel_mm=travel).items():
+        for leg, d in z_trim_corrections(r.residuals, level_per_mm=empfindlichkeit).items():
             z_trim[leg] += d
 
     assert verlauf[-1] < verlauf[0] / 20, verlauf
@@ -249,7 +250,7 @@ def test_totband_laesst_kleine_residuen_in_ruhe() -> None:
     """Unter der Messgrenze wuerde man nur Rauschen korrigieren."""
     korr = z_trim_corrections(
         {"a": 0.10, "b": 0.01, "c": -0.01, "d": -0.10},
-        travel_mm=5.5, deadband=0.03,
+        level_per_mm=0.18, deadband=0.03,
     )
     # a und d liegen drueber und werden gegenlaeufig korrigiert
     assert korr["a"] < -0.1 and korr["d"] > 0.1
@@ -260,21 +261,21 @@ def test_totband_laesst_kleine_residuen_in_ruhe() -> None:
 def test_totband_bleibt_mittelwertfrei() -> None:
     korr = z_trim_corrections(
         {"a": 0.20, "b": 0.01, "c": 0.0, "d": 0.0},
-        travel_mm=5.5, deadband=0.03,
+        level_per_mm=0.18, deadband=0.03,
     )
     assert sum(korr.values()) == pytest.approx(0.0, abs=1e-9)
 
 
 def test_alles_im_totband_ergibt_keine_korrektur() -> None:
     korr = z_trim_corrections(
-        dict.fromkeys("abcd", 0.01), travel_mm=5.5, deadband=0.03
+        dict.fromkeys("abcd", 0.01), level_per_mm=0.18, deadband=0.03
     )
     assert all(v == pytest.approx(0.0) for v in korr.values())
 
 
 def test_negatives_totband_wird_abgelehnt() -> None:
     with pytest.raises(ValueError, match="deadband"):
-        z_trim_corrections({"a": 0.0, "b": 0.0}, travel_mm=5.5, deadband=-0.1)
+        z_trim_corrections({"a": 0.0, "b": 0.0}, level_per_mm=0.18, deadband=-0.1)
 
 
 def test_konvergenzmass() -> None:

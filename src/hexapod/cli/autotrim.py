@@ -33,7 +33,7 @@ from rich.table import Table
 
 from hexapod.calib import (
     BalanceResult,
-    estimate_travel_mm,
+    estimate_level_per_mm,
     fit_load_plane,
     tilt_corrections,
     z_trim_corrections,
@@ -43,8 +43,9 @@ from hexapod.robot.hexapod import Hexapod
 
 console = Console()
 
-# Vollweg-Startwert, bis die erste Runde den echten Wert liefert.
-DEFAULT_TRAVEL_MM = 5.0
+# Startwert fuer die Empfindlichkeit, bis die erste Runde einen echten
+# Wert liefert. Gemessen wurden am Arbeitspunkt rund 0,068 Federweg je mm.
+DEFAULT_LEVEL_PER_MM = 0.068
 # Messdauer je Runde. Lang genug, dass sich der Aufbau beruhigt.
 MEASURE_S = 2.0
 MEASURE_INTERVAL = 0.05
@@ -89,9 +90,9 @@ def _read_tilt(robot: Hexapod) -> tuple[float, float] | None:
 
 
 def _report(runde: int, result: BalanceResult, tilt: tuple[float, float] | None,
-            korrektur: dict[str, float], travel_mm: float,
+            korrektur: dict[str, float], level_per_mm: float,
             vorrunde: dict[str, float] | None = None) -> None:
-    table = Table(title=f"Runde {runde}   (Vollweg {travel_mm:.2f} mm)")
+    table = Table(title=f"Runde {runde}   ({level_per_mm * 100:.1f} % je mm)")
     table.add_column("Bein")
     table.add_column("Federweg", justify="right")
     if vorrunde is not None:
@@ -123,7 +124,7 @@ def _report(runde: int, result: BalanceResult, tilt: tuple[float, float] | None,
 
 def _log(lauf_id: str, runde: int, result: BalanceResult,
          tilt: tuple[float, float] | None, korrektur: dict[str, float],
-         travel_mm: float, robot: Hexapod) -> None:
+         level_per_mm: float, robot: Hexapod) -> None:
     """Eine Zeile je Runde als JSON wegschreiben.
 
     Bewusst maschinenlesbar und anhaengend: so bleibt die Historie mehrerer
@@ -133,7 +134,7 @@ def _log(lauf_id: str, runde: int, result: BalanceResult,
         "lauf": lauf_id,
         "zeit": datetime.now().isoformat(timespec="seconds"),
         "runde": runde,
-        "travel_mm": round(travel_mm, 3),
+        "level_per_mm": round(level_per_mm, 5),
         "levels": {k: round(v, 5) for k, v in result.levels.items()},
         "residuen": {k: round(v, 5) for k, v in result.residuals.items()},
         "ebene": [round(v, 6) for v in result.plane],
@@ -153,7 +154,7 @@ def run_auto_trim(
     config_path: Path,
     *,
     rounds: int = 4,
-    travel_mm: float | None = None,
+    level_per_mm: float | None = None,
     damping: float = 0.8,
     deadband: float = DEFAULT_DEADBAND,
     use_imu: bool = True,
@@ -183,18 +184,18 @@ def run_auto_trim(
 
         positions = robot.neutral_foot_xy
         # Reihenfolge: CLI schlaegt Konfiguration schlaegt Schaetzung.
-        aus_config = robot.config.foot_sensors.travel_mm
-        aktueller_travel = travel_mm or aus_config or DEFAULT_TRAVEL_MM
-        gelernt = travel_mm is not None or aus_config is not None
+        aus_config = robot.config.foot_sensors.level_per_mm
+        aktuell = level_per_mm or aus_config or DEFAULT_LEVEL_PER_MM
+        gelernt = level_per_mm is not None or aus_config is not None
         if gelernt:
-            quelle = "CLI" if travel_mm is not None else "robot.yaml"
+            quelle = "CLI" if level_per_mm is not None else "robot.yaml"
             console.print(
-                f"[dim]Vollweg der Schubstange: {aktueller_travel:.2f} mm ({quelle})[/dim]"
+                f"[dim]Vollweg der Schubstange: {aktuell:.2f} mm ({quelle})[/dim]"
             )
         else:
             console.print(
-                "[yellow]Kein Vollweg in foot_sensors.travel_mm hinterlegt — "
-                "er wird geschaetzt, was deutlich unzuverlaessiger ist.[/yellow]"
+                "[yellow]Kein level_per_mm in foot_sensors hinterlegt — es wird "
+                "geschaetzt, was deutlich unzuverlaessiger ist.[/yellow]"
             )
         letzte_neigung: float | None = None
 
@@ -228,7 +229,7 @@ def run_auto_trim(
             result = fit_load_plane(levels, positions)
 
             korrektur = z_trim_corrections(
-                result.residuals, travel_mm=aktueller_travel,
+                result.residuals, level_per_mm=aktuell,
                 damping=damping, deadband=deadband,
             )
             if tilt is not None:
@@ -237,8 +238,8 @@ def run_auto_trim(
                 ).items():
                     korrektur[leg] = korrektur.get(leg, 0.0) + d * damping
 
-            _report(runde, result, tilt, korrektur, aktueller_travel, vorrunde)
-            _log(lauf_id, runde, result, tilt, korrektur, aktueller_travel, robot)
+            _report(runde, result, tilt, korrektur, aktuell, vorrunde)
+            _log(lauf_id, runde, result, tilt, korrektur, aktuell, robot)
             vorrunde = dict(levels)
 
             # Fertig, wenn nichts mehr ueber der Messgrenze liegt. Ohne dieses
@@ -278,17 +279,17 @@ def run_auto_trim(
                 settle_to_stance(robot, force=True)
                 time.sleep(0.4)
                 nachher = _measure(sensors)
-                geschaetzt = estimate_travel_mm(angewendet, vorher, nachher)
-                if geschaetzt is not None and 0.5 < geschaetzt < 50.0:
-                    aktueller_travel = geschaetzt
+                geschaetzt = estimate_level_per_mm(angewendet, vorher, nachher)
+                if geschaetzt is not None and 0.005 < geschaetzt < 0.5:
+                    aktuell = geschaetzt
                     gelernt = True
                     console.print(
-                        f"[green]Vollweg der Schubstange aus der Reaktion "
-                        f"gemessen: {geschaetzt:.2f} mm[/green]"
+                        f"[green]Empfindlichkeit aus der Reaktion gemessen: "
+                        f"{geschaetzt * 100:.1f} % je mm[/green]"
                     )
                 else:
                     console.print(
-                        "[yellow]Vollweg ließ sich nicht bestimmen — die Schritte "
+                        "[yellow]Empfindlichkeit ließ sich nicht bestimmen — die Schritte "
                         "waren zu klein. Rechne weiter mit dem Startwert.[/yellow]"
                     )
 

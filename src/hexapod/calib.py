@@ -96,7 +96,7 @@ def fit_load_plane(
 def z_trim_corrections(
     residuals: Mapping[str, float],
     *,
-    travel_mm: float,
+    level_per_mm: float,
     damping: float = 0.8,
     deadband: float = 0.0,
 ) -> dict[str, float]:
@@ -113,8 +113,10 @@ def z_trim_corrections(
 
     Args:
         residuals: Bein -> Residuum im Federweg.
-        travel_mm: Mechanischer Vollweg der Schubstange in mm. Rechnet
-            Federweg-Anteile in Millimeter um.
+        level_per_mm: Federweg-Anteil je Millimeter z_trim am Arbeitspunkt.
+            Nicht zu verwechseln mit dem mechanischen Weg der Schubstange —
+            der Sensor misst nicht linear ueber diesen Weg, siehe
+            FootSensorsConfig.level_per_mm.
         damping: Anteil der berechneten Korrektur, der angewendet wird.
             Unter 1.0, damit die Schleife nicht ueberschwingt. Der Ebenen-Fit
             daempft ohnehin schon: er kippt dem Ausreisser hinterher, sodass
@@ -132,22 +134,22 @@ def z_trim_corrections(
     Mittelwertfreiheit ab. Das ist gewollt -- die Summe muss null bleiben,
     sonst wandert die Koerperhoehe.
     """
-    if travel_mm <= 0.0:
-        raise ValueError(f"travel_mm muss positiv sein, war {travel_mm}")
+    if level_per_mm <= 0.0:
+        raise ValueError(f"level_per_mm muss positiv sein, war {level_per_mm}")
     if not 0.0 < damping <= 1.0:
         raise ValueError(f"damping muss in (0, 1] liegen, war {damping}")
     if deadband < 0.0:
         raise ValueError(f"deadband darf nicht negativ sein, war {deadband}")
 
     raw = {
-        leg: (0.0 if abs(r) < deadband else -r * travel_mm * damping)
+        leg: (0.0 if abs(r) < deadband else -r / level_per_mm * damping)
         for leg, r in residuals.items()
     }
     offset = sum(raw.values()) / len(raw)
     return {leg: value - offset for leg, value in raw.items()}
 
 
-def estimate_travel_mm(
+def estimate_level_per_mm(
     applied_mm: Mapping[str, float],
     level_before: Mapping[str, float],
     level_after: Mapping[str, float],
@@ -155,22 +157,20 @@ def estimate_travel_mm(
     min_legs: int = 3,
     min_span_mm: float = 0.3,
 ) -> float | None:
-    """Aus einer angewendeten Korrektur den Federweg in mm zurueckrechnen.
+    """Empfindlichkeit am Arbeitspunkt aus einer angewendeten Korrektur schaetzen.
 
-    Besser ist, den Vollweg einmal zu messen und in die robot.yaml zu
-    schreiben (``foot_sensors.travel_mm``). Diese Schaetzung ist nur der
-    Notnagel, wenn er dort fehlt.
+    Besser ist, sie einmal zu vermessen und in die robot.yaml zu schreiben
+    (``foot_sensors.level_per_mm``). Diese Schaetzung ist der Notnagel, wenn
+    sie dort fehlt.
 
     Gerechnet wird als **Regression der Reaktion ueber die Korrektur**, nicht
     als Median von Quotienten. Die angewendete Korrektur ist exakt bekannt,
     die gemessene Reaktion verrauscht — ein Quotient mit fast leerem Nenner
-    sprengt die Schaetzung sonst um Groessenordnungen. Genau das ist einmal
-    passiert: aus einem echten Vollweg von 5,5 mm wurden 15 mm, und die
-    Schleife hat daraufhin dreifach ueberkorrigiert.
+    sprengt die Schaetzung sonst um Groessenordnungen.
 
     Returns:
-        Geschaetzter Vollweg in mm, oder None wenn die Anregung zu klein war
-        oder die Reaktion nicht zur Korrektur passt.
+        Federweg-Anteil je Millimeter, oder None wenn die Anregung zu klein
+        war oder die Reaktion nicht zur Korrektur passt.
     """
     dz: list[float] = []
     dl: list[float] = []
@@ -184,10 +184,11 @@ def estimate_travel_mm(
     if max(dz) - min(dz) < min_span_mm:
         return None  # zu wenig angeregt, um etwas zu unterscheiden
 
-    nenner = sum(z * lvl for z, lvl in zip(dz, dl, strict=True))
-    if nenner <= 0.0:
+    zaehler = sum(z * lvl for z, lvl in zip(dz, dl, strict=True))
+    if zaehler <= 0.0:
         return None  # keine oder gegenlaeufige Reaktion -> nichts ableitbar
-    return sum(z * z for z in dz) / nenner
+    return zaehler / sum(z * z for z in dz)
+
 
 def tilt_corrections(
     roll_rad: float,
