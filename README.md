@@ -8,12 +8,15 @@ Web-UI zur Steuerung.
 *An alternative, from-scratch control stack for the Freenove Big Hexapod.
 Docs and code comments are in German.*
 
-> **Wichtig / Hardware-Voraussetzung:** Diese Software steuert die Servos über
-> einen **Pololu Mini Maestro 24-Channel** (USB) statt über das originale
-> Freenove-Servoboard. Ein Treiber für den originalen **PCA9685**-Controller
-> existiert **noch nicht** — das Treiber-Interface (`drivers/base.py`) ist
-> dafür vorbereitet, Beiträge sind willkommen. Ohne Maestro läuft die Software
-> nur im Simulator.
+> **Wichtig / Hardware-Voraussetzung:** Diese Software steuert die Beinservos
+> über **Pololu Mini Maestro**-Controller (USB) statt über das originale
+> Freenove-Servoboard. Die Konfiguration kennt beliebig viele benannte Busse;
+> der Referenzaufbau nutzt zwei — einen 24-Kanal für die linke, einen
+> 12-Kanal für die rechte Seite. Ein **PCA9685**-Treiber existiert und wird
+> für die Kameraservos auf der Freenove-Originalplatine verwendet; die
+> *Beine* über PCA9685 anzusteuern ist dagegen noch nicht umgesetzt (dem
+> Board fehlen die Analogeingänge für die Fußsensoren). Ohne Maestro läuft
+> die Software nur im Simulator.
 
 ## Features
 
@@ -25,13 +28,19 @@ Docs and code comments are in German.*
 - **Bewegungen:** kontinuierlicher, kommandierbarer Gait (Joystick), sanftes
   Aufstehen/Hinlegen, Kletter-Sequenz für Stufen, Gesten (Winken, Mantis-Pose,
   Bein heben u. a.)
+- **Fußsensoren:** Hall-Sensor an federbelasteter Schubstange pro Bein, als
+  **Wegaufnehmer** ausgewertet (nicht als Taster). Damit: Lastverteilung im
+  Stand, automatisches Ausbalancieren der Beinhöhen (`auto-trim`) und
+  Aufsetz-Erkennung im Gang — ein Schwungbein hält an, sobald es früher
+  Boden findet als erwartet, und behält diese Höhe für die folgenden
+  Schritte. Details in [`docs/FUSSSENSOREN.md`](docs/FUSSSENSOREN.md)
 - **Sensorik:** MPU6050 (Selbstnivellierung im Stand), Akkuüberwachung,
   Kamera; HC-SR04-Sonar für Hindernis-Stopp und Sweep-Scan ist integriert,
   aber noch in Erprobung
 - **Web-UI:** Dashboard mit Joystick, Pose-Slidern, Kamerabild und
   Netzwerk-Verwaltung (WLAN/Hotspot); zusätzlich Gamepad-Seite
 - **CLI:** `uv run hexapod ...` mit u. a. `calibrate`, `walk`, `move`, `pose`,
-  `trim`, `status`
+  `trim`, `status`, `foot-monitor`, `foot-calibrate`, `auto-trim`
 
 ## Fernsteuerung mit RC-Sender (ESP32-Modul)
 
@@ -136,10 +145,13 @@ Commit-Konvention: deutsche Conventional Commits (`feat(gait): ...`).
 - [x] Web-UI, Gesten, Klettern, Selbstnivellierung
 - [x] RC-Fernsteuerung via ESP32-CRSF-Modul, Android-App
 - [x] Vision-Pipeline (YOLO11 + Tracking + Tiefe) mit Follow-Modus
+- [x] Fußsensoren: Lastverteilung, `auto-trim`, Aufsetz-Erkennung im Gang
+- [x] PCA9685-Treiber (Kameraservos auf der Freenove-Originalplatine)
 - [ ] Sonar-Hindernisvermeidung fertigstellen (Hardware-Verifikation)
-- [ ] Fußsensoren (Bodenkontakt-Erkennung)
-- [ ] Kalibrierungsrig-STL veröffentlichen
-- [ ] PCA9685-Treiber fuer das originale Freenove-Board
+- [ ] Reflexe aus Fußsensor + MPU6050-Gyroskop (nicht kommandiertes Kippen)
+- [ ] Aufsetz-Erkennung in Tetrapod/Ripple/Wave übernehmen
+- [ ] Loch-/Absatz-Erkennung (kein Kontakt bis zum Bahnende)
+- [ ] Beinservos über PCA9685 (dem Board fehlen die Analogeingänge)
 
 ## Lizenz & Hinweis
 
