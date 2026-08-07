@@ -122,7 +122,7 @@ Tibia runter, Füße über die Standpunkte, dann langsames Heben des Körpers
 
 Die **Feineinstellung** einzelner Gelenke erfolgt später im Betrieb über
 `uv run hexapod trim` bzw. `stance-trim`. Ein 3D-druckbares **Kalibrierungsrig**
-(STL) für reproduzierbare Referenzwinkel folgt in Kürze im Repo.
+für reproduzierbare Referenzwinkel liegt unter [`tools/CalibrationJig.stl`](tools/CalibrationJig.stl).
 
 **Sicherheitshinweis:** Nach dem Einschalten kennt der Controller die
 mechanische Lage der Beine nicht. Die Software fährt deshalb beim Aufstehen
@@ -148,6 +148,7 @@ Commit-Konvention: deutsche Conventional Commits (`feat(gait): ...`).
 - [x] Fußsensoren: Lastverteilung, `auto-trim`, Aufsetz-Erkennung im Gang
 - [x] PCA9685-Treiber (Kameraservos auf der Freenove-Originalplatine)
 - [ ] Sonar-Hindernisvermeidung fertigstellen (Hardware-Verifikation)
+- [x] Kalibrierungsrig-STL veröffentlicht
 - [ ] Reflexe aus Fußsensor + MPU6050-Gyroskop (nicht kommandiertes Kippen)
 - [ ] Aufsetz-Erkennung in Tetrapod/Ripple/Wave übernehmen
 - [ ] Loch-/Absatz-Erkennung (kein Kontakt bis zum Bahnende)
